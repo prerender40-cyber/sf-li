@@ -1,0 +1,292 @@
+# sf-toolkit.ps1 - Orchestrator-1, 2026-11-25
+# Logging helpers for the READ-ONLY Salesforce export (runbook: salesforce-vdi-runbook.md).
+# Nothing in this file changes Salesforce. It only writes files under your own profile folder:
+#   %USERPROFILE%\sf-work\logs   (one log per step, steps.csv, report-*.txt)
+#
+# Load it once per PowerShell window, EITHER:
+#   - paste this whole file into the PowerShell window and press Enter, OR
+#   - save it as sf-toolkit.ps1 and run:   . .\sf-toolkit.ps1      (dot, space, path)
+#
+# Commands it gives you:
+#   Invoke-SfStep '<name>' { <command> }   run a command, show its output, log everything, record exit code
+#   Get-SfReport                           paste-ready report of the last FAILED step (secrets masked)
+#   Get-SfReport -IncludeOk -Steps 3       report of the last 3 steps, failed or not
+#   Get-SfHistory                          table of every step run so far
+#   Test-SfSetup                           checks tools, versions and network access
+#   Export-SfCodeViaQuery                  Plan B for code: export Apex/VF/LWC/Aura source via read-only queries
+
+if (-not $global:SfWork) { $global:SfWork = Join-Path $env:USERPROFILE 'sf-work' }
+$global:SfLogDir    = Join-Path $global:SfWork 'logs'
+$global:SfStepsFile = Join-Path $global:SfLogDir 'steps.csv'
+New-Item -ItemType Directory -Force -Path $global:SfLogDir | Out-Null
+
+# Session-only setting (gone when the window closes): do not send CLI usage telemetry.
+$env:SF_DISABLE_TELEMETRY = 'true'
+
+function Remove-SfAnsi {
+    param([string]$Text)
+    if ($null -eq $Text) { return '' }
+    return ($Text -replace '\x1b\[[0-9;?]*[A-Za-z]', '')
+}
+
+function Protect-SfText {
+    # Masks tokens, auth URLs, secrets and e-mail addresses before anything is shared.
+    param([Parameter(ValueFromPipeline = $true)][AllowEmptyString()][AllowNull()][string]$Text)
+    process {
+        if ($null -eq $Text) { return }
+        $t = Remove-SfAnsi $Text
+        $t = $t -replace '00D[A-Za-z0-9]{12,15}![A-Za-z0-9._\-]+', '[TOKEN]'
+        $t = $t -replace '(?i)(bearer\s+)\S+', '$1[TOKEN]'
+        $t = $t -replace 'force://\S+', '[AUTH-URL]'
+        $t = $t -replace '(?i)("?(access_?token|refresh_?token|client_?secret|password|session_?id|sfdx_?auth_?url)"?\s*[:=]\s*)"?[^\s",}]+"?', '$1[REDACTED]'
+        $t = $t -replace '[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}', '[EMAIL]'
+        $t
+    }
+}
+
+function Invoke-SfStep {
+    param(
+        [Parameter(Mandatory = $true, Position = 0)][string]$Name,
+        [Parameter(Mandatory = $true, Position = 1)][scriptblock]$Command
+    )
+    $ErrorActionPreference = 'Continue'
+    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $safeName = $Name -replace '[^A-Za-z0-9_.\-]', '_'
+    $log = Join-Path $global:SfLogDir "$stamp-$safeName.log"
+    @(
+        "STEP    : $Name",
+        "COMMAND : $($Command.ToString().Trim())",
+        "FOLDER  : $((Get-Location).Path)",
+        "STARTED : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
+        '----- output -----'
+    ) | Out-File -FilePath $log -Encoding utf8
+
+    $global:LASTEXITCODE = 0
+    $code = '0'
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        & $Command 2>&1 | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) { $line = $_.Exception.Message } else { $line = "$_" }
+            $line = Remove-SfAnsi $line
+            Write-Host $line
+            $line | Out-File -FilePath $log -Append -Encoding utf8
+        }
+        $code = "$global:LASTEXITCODE"
+    } catch {
+        $code = 'POWERSHELL-ERROR'
+        $msg = "POWERSHELL ERROR: $($_.Exception.Message)"
+        Write-Host $msg -ForegroundColor Red
+        $msg | Out-File -FilePath $log -Append -Encoding utf8
+    }
+    $sw.Stop()
+    $secs = [int]$sw.Elapsed.TotalSeconds
+    @('----- end -----', "EXIT    : $code", "SECONDS : $secs") | Out-File -FilePath $log -Append -Encoding utf8
+
+    [pscustomobject]@{
+        Time    = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+        Step    = $Name
+        Exit    = $code
+        Seconds = $secs
+        Log     = (Split-Path $log -Leaf)
+    } | Export-Csv -Path $global:SfStepsFile -Append -NoTypeInformation -Encoding UTF8
+
+    if ($code -eq '0') {
+        Write-Host "OK: $Name  ($secs s, log: $log)" -ForegroundColor Green
+    } else {
+        Write-Host "FAILED: $Name (exit $code). Run  Get-SfReport  and send me what it prints." -ForegroundColor Red
+    }
+}
+
+function Get-SfHistory {
+    if (-not (Test-Path $global:SfStepsFile)) { Write-Host 'No steps logged yet.'; return }
+    Import-Csv $global:SfStepsFile | Format-Table Time, Step, Exit, Seconds, Log -AutoSize
+}
+
+function Get-SfReport {
+    param(
+        [int]$Steps = 1,          # how many steps to include
+        [int]$Lines = 40,         # how many output lines per step (from the end)
+        [switch]$IncludeOk        # include successful steps too
+    )
+    $out = New-Object System.Collections.Generic.List[string]
+    $out.Add("=== SF REPORT $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ===")
+    $out.Add("PowerShell $($PSVersionTable.PSVersion) | Windows $([Environment]::OSVersion.Version)")
+    $sfCmd = Get-Command sf -ErrorAction SilentlyContinue
+    if ($sfCmd) {
+        $ver = (& sf --version 2>&1 | Select-Object -First 1)
+        $out.Add("sf: $ver")
+    } else {
+        $out.Add('sf: NOT FOUND on PATH')
+    }
+    $out.Add("Current folder: $((Get-Location).Path)")
+
+    if (Test-Path $global:SfStepsFile) {
+        $all = @(Import-Csv $global:SfStepsFile)
+        if ($IncludeOk) { $pick = $all } else { $pick = @($all | Where-Object { $_.Exit -ne '0' }) }
+        $pick = @($pick | Select-Object -Last $Steps)
+        if ($pick.Count -eq 0) { $out.Add('No failed steps logged. Use  Get-SfReport -IncludeOk  to include successful ones.') }
+        foreach ($s in $pick) {
+            $path = Join-Path $global:SfLogDir $s.Log
+            $out.Add('')
+            $out.Add("--- $($s.Step) | exit $($s.Exit) | $($s.Time) | $($s.Seconds) s ---")
+            if (-not (Test-Path $path)) { $out.Add("(log file missing: $($s.Log))"); continue }
+            $content = @(Get-Content -Path $path -Encoding UTF8)
+            $content | Select-Object -First 4 | ForEach-Object { $out.Add($_) }
+            $body = @($content | Select-Object -Skip 5)
+            if ($body.Count -gt $Lines) { $out.Add("... ($($body.Count - $Lines) earlier lines cut) ...") }
+            $body | Select-Object -Last $Lines | ForEach-Object { $out.Add($_) }
+        }
+    } else {
+        $out.Add('No steps logged yet.')
+    }
+
+    # The CLI's own log (JSON lines). Level 50 = error, 60 = fatal.
+    $sfLogDir = Join-Path $env:USERPROFILE '.sf'
+    $sfLog = Get-ChildItem -Path $sfLogDir -Filter 'sf*.log' -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($sfLog) {
+        $errs = @(Get-Content -Path $sfLog.FullName -Tail 500 -ErrorAction SilentlyContinue |
+            Where-Object { $_ -match '"level"\s*:\s*(50|60)' } | Select-Object -Last 5)
+        if ($errs.Count -gt 0) {
+            $out.Add('')
+            $out.Add("--- sf internal errors ($($sfLog.Name), last $($errs.Count)) ---")
+            foreach ($e in $errs) {
+                if ($e.Length -gt 700) { $e = $e.Substring(0, 700) + ' ...(cut)' }
+                $out.Add($e)
+            }
+        }
+    }
+
+    $text = (@($out | Protect-SfText)) -join [Environment]::NewLine
+    $file = Join-Path $global:SfLogDir "report-$(Get-Date -Format 'yyyyMMdd-HHmmss').txt"
+    $text | Out-File -FilePath $file -Encoding utf8
+    $clip = 'clipboard not available'
+    try { Set-Clipboard -Value $text -ErrorAction Stop; $clip = 'also copied to the clipboard' } catch { }
+    Write-Host $text
+    Write-Host ''
+    Write-Host "Report saved to $file ($clip). Secrets and e-mail addresses are masked; still glance over it before sending." -ForegroundColor Cyan
+}
+
+function Test-SfSetup {
+    Invoke-SfStep '00-setup-check' {
+        "PowerShell  : $($PSVersionTable.PSVersion)"
+        "Windows     : $([Environment]::OSVersion.Version)"
+        "Work folder : $global:SfWork"
+        foreach ($tool in 'sf', 'node', 'npm', 'git', 'code', 'java') {
+            $c = Get-Command $tool -ErrorAction SilentlyContinue
+            if ($c) { "$tool : found ($($c.Source))" } else { "$tool : NOT FOUND" }
+        }
+        if (Get-Command sf -ErrorAction SilentlyContinue) { sf --version }
+        if (Get-Command java -ErrorAction SilentlyContinue) { java -version }
+        if (Get-Command code -ErrorAction SilentlyContinue) { 'VS Code Salesforce extensions installed:'; code --list-extensions | Where-Object { $_ -match 'salesforce' } }
+        foreach ($u in 'https://login.salesforce.com', 'https://test.salesforce.com', 'https://registry.npmjs.org', 'https://marketplace.visualstudio.com') {
+            try {
+                $r = Invoke-WebRequest -Uri $u -Method Head -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
+                "$u : reachable ($($r.StatusCode))"
+            } catch {
+                "$u : NOT reachable ($($_.Exception.Message))"
+            }
+        }
+        $global:LASTEXITCODE = 0
+    }
+}
+
+function Write-SfFile {
+    param([string]$Path, [string]$Text)
+    $dir = Split-Path $Path
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    [IO.File]::WriteAllText($Path, [string]$Text, (New-Object System.Text.UTF8Encoding $false))
+}
+
+function Get-SfColumn {
+    # CSV headers for related fields look like "LightningComponentBundle.DeveloperName".
+    param($Row, [string[]]$Names)
+    foreach ($n in $Names) {
+        $p = $Row.PSObject.Properties[$n]
+        if ($p) { return [string]$p.Value }
+    }
+    return ''
+}
+
+function Export-SfCodeViaQuery {
+    # Plan B for Phase 2: only if "sf project retrieve start" is refused for permissions.
+    # Reads source through the Tooling API (the same API the Developer Console uses) with SELECT queries only.
+    # Writes CSVs to <project>\code-csv and source files to <project>\force-app-from-query\main\default.
+    param(
+        [string]$TargetOrg = 'sf-prod',
+        [string]$ProjectDir = (Join-Path $global:SfWork 'sf-export')
+    )
+    $csvDir = Join-Path $ProjectDir 'code-csv'
+    $outDir = Join-Path $ProjectDir 'force-app-from-query\main\default'
+    New-Item -ItemType Directory -Force -Path $csvDir | Out-Null
+
+    $queries = [ordered]@{
+        'apex-classes'   = 'SELECT Name, ApiVersion, Status, Body FROM ApexClass WHERE NamespacePrefix = null'
+        'apex-triggers'  = 'SELECT Name, TableEnumOrId, ApiVersion, Status, Body FROM ApexTrigger WHERE NamespacePrefix = null'
+        'vf-pages'       = 'SELECT Name, ApiVersion, Markup FROM ApexPage WHERE NamespacePrefix = null'
+        'vf-components'  = 'SELECT Name, ApiVersion, Markup FROM ApexComponent WHERE NamespacePrefix = null'
+        'lwc-resources'  = 'SELECT LightningComponentBundle.DeveloperName, FilePath, Format, Source FROM LightningComponentResource WHERE LightningComponentBundle.NamespacePrefix = null'
+        'aura-resources' = 'SELECT AuraDefinitionBundle.DeveloperName, DefType, Format, Source FROM AuraDefinition WHERE AuraDefinitionBundle.NamespacePrefix = null'
+    }
+    foreach ($k in $queries.Keys) {
+        $file = Join-Path $csvDir "$k.csv"
+        $cmd = [scriptblock]::Create("sf data query --use-tooling-api --target-org $TargetOrg --result-format csv --output-file `"$file`" --query `"$($queries[$k])`"")
+        Invoke-SfStep "code-$k" $cmd
+    }
+
+    Invoke-SfStep 'code-split-into-files' {
+        $counts = [ordered]@{}
+        $map = @(
+            @{ Key = 'apex-classes';  Folder = 'classes';    Ext = '.cls';       Body = 'Body' },
+            @{ Key = 'apex-triggers'; Folder = 'triggers';   Ext = '.trigger';   Body = 'Body' },
+            @{ Key = 'vf-pages';      Folder = 'pages';      Ext = '.page';      Body = 'Markup' },
+            @{ Key = 'vf-components'; Folder = 'components'; Ext = '.component'; Body = 'Markup' }
+        )
+        foreach ($m in $map) {
+            $f = Join-Path $csvDir "$($m.Key).csv"
+            if (-not (Test-Path $f)) { $counts[$m.Key] = 'no csv'; continue }
+            $n = 0
+            foreach ($r in (Import-Csv $f)) {
+                Write-SfFile (Join-Path $outDir "$($m.Folder)\$($r.Name)$($m.Ext)") $r.($m.Body)
+                $n++
+            }
+            $counts[$m.Key] = $n
+        }
+
+        $f = Join-Path $csvDir 'lwc-resources.csv'
+        if (Test-Path $f) {
+            $n = 0
+            foreach ($r in (Import-Csv $f)) {
+                $fp = Get-SfColumn $r @('FilePath')
+                if (-not $fp) { continue }
+                Write-SfFile (Join-Path $outDir ($fp -replace '/', '\')) (Get-SfColumn $r @('Source'))
+                $n++
+            }
+            $counts['lwc-resources'] = $n
+        }
+
+        $auraExt = @{
+            COMPONENT = '.cmp'; APPLICATION = '.app'; EVENT = '.evt'; INTERFACE = '.intf'; TOKENS = '.tokens'
+            CONTROLLER = 'Controller.js'; HELPER = 'Helper.js'; RENDERER = 'Renderer.js'
+            STYLE = '.css'; DOCUMENTATION = '.auradoc'; DESIGN = '.design'; SVG = '.svg'
+        }
+        $f = Join-Path $csvDir 'aura-resources.csv'
+        if (Test-Path $f) {
+            $n = 0
+            foreach ($r in (Import-Csv $f)) {
+                $bundle = Get-SfColumn $r @('AuraDefinitionBundle.DeveloperName', 'AuraDefinitionBundle_DeveloperName')
+                $def = Get-SfColumn $r @('DefType')
+                $ext = $auraExt[$def]
+                if (-not $ext) { $ext = ".$($def.ToLower()).txt" }
+                Write-SfFile (Join-Path $outDir "aura\$bundle\$bundle$ext") (Get-SfColumn $r @('Source'))
+                $n++
+            }
+            $counts['aura-resources'] = $n
+        }
+        foreach ($k in $counts.Keys) { "$k : $($counts[$k]) file(s)" }
+        "Written under: $outDir"
+        $global:LASTEXITCODE = 0
+    }
+}
+
+Write-Host "sf-toolkit loaded. Logs go to $global:SfLogDir" -ForegroundColor Cyan
