@@ -254,3 +254,13 @@ Get-SfReport -IncludeOk -Steps 5 -Lines 60
 
 ------------------
 
+Get-ChildItem force-app\main\default\objects\SJO_Invoice__c\fields -Filter '*ipo*' | ForEach-Object Name
+
+------------------
+
+Invoke-SfStep '07u-sjo-status' { sf data query --target-org sf-cargill15 --result-format csv --query "SELECT SJO_Estado__c estado, COUNT(Id) n FROM SJO_Invoice__c WHERE CreatedDate = LAST_N_DAYS:365 GROUP BY SJO_Estado__c" }
+Invoke-SfStep '07u-date-range' { 'GP','SJO','ROSPBU' | ForEach-Object { $o = @{GP='BMCRF_GP_Invoice__c';SJO='SJO_Invoice__c';ROSPBU='ROSPBU_Invoice__c'}[$_]; "-- $_"; sf data query --target-org sf-cargill15 --result-format csv --query "SELECT MIN(CreatedDate) first, MAX(CreatedDate) last, COUNT(Id) total FROM $o" } }
+Get-SfReport -IncludeOk -Steps 2
+
+------------------
+
