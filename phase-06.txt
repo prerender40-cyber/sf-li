@@ -17,6 +17,12 @@ Invoke-SfStep '06o-user-counts' { sf data query --target-org sf-cargill15 --resu
 
 -----------------------
 
+#### From the above code 06o-user-counts gives error so instead use this command
+
+Invoke-SfStep '06o-user-counts' { sf data query --target-org sf-cargill15 --result-format csv --output-file csv/user-counts.csv --query "SELECT Profile.Name profileName, UserRole.Name roleName, COUNT(Id) userCount FROM User WHERE IsActive = true GROUP BY Profile.Name, UserRole.Name" }
+
+-----------------------
+
 Get-SfHistory
 
 -----------------------
