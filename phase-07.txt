@@ -12,13 +12,12 @@ Invoke-SfStep '07c-filter-own-code' {
   $x = [xml](Get-Content manifest/code.xml)
   foreach ($t in @($x.Package.types)) {
     $nodes = @($t.ChildNodes | Where-Object { $_.LocalName -eq 'members' })
-    $managed = @($nodes | Where-Object { $_.InnerText -match '__' })
-    foreach ($n in $managed) { [void]$t.RemoveChild($n) }
-    "{0} : {1} total, {2} from packages, {3} own" -f $t.name, $nodes.Count, $managed.Count, ($nodes.Count - $managed.Count)
+    $drop = @($nodes | Where-Object { $_.InnerText -match '^(BMCServiceDesk|CodeBuilder)__' })
+    foreach ($n in $drop) { [void]$t.RemoveChild($n) }
+    "{0} : {1} total, {2} left out, {3} kept" -f $t.name, $nodes.Count, $drop.Count, ($nodes.Count - $drop.Count)
   }
-  foreach ($s in @($x.Package.types | Where-Object { $_.name -eq 'StaticResource' })) { [void]$x.Package.RemoveChild($s) }
   $x.Save((Join-Path (Get-Location).Path 'manifest\code-own.xml'))
-  'StaticResource left out for now. Saved manifest\code-own.xml'
+  'Saved manifest\code-own.xml'
 }
 
 
