@@ -292,3 +292,17 @@ function Export-SfCodeViaQuery {
 }
 
 Write-Host "sf-toolkit loaded. Logs go to $global:SfLogDir" -ForegroundColor Cyan
+
+
+
+-----------------------------------------------------------------------------------------------
+
+Invoke-SfStep '01-login' { sf org login web --alias sf-cargill15 --instance-url https://cargill15--cargill15.sandbox.my.salesforce.com }
+
+----------------------------------------------------------------------------------------------
+
+Invoke-SfStep '01b-org-list' { sf org list }
+
+------------------------------------------------------------------------------------------------
+
+Invoke-SfStep '02-my-permissions' { sf data query --target-org sf-prod --query "SELECT PermissionSet.Label, PermissionSet.IsOwnedByProfile, PermissionSet.PermissionsApiEnabled, PermissionSet.PermissionsViewSetup, PermissionSet.PermissionsViewAllData, PermissionSet.PermissionsModifyAllData, PermissionSet.PermissionsModifyMetadata, PermissionSet.PermissionsAuthorApex FROM PermissionSetAssignment WHERE Assignee.Username = 'YOUR_USERNAME'" }
