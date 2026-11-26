@@ -187,5 +187,9 @@ $x = Get-Content force-app\main\default\objects\BMCRF_GP_Invoice__c\fields\BMCRF
 ---
 -----------------
 
+Show-SfMethod BMCRF_SJOInvoiceDetailsController saveInvoiceDetails -Keep 'if\s*\(|else|Estado__c|Team|OwnerId|Queue|Specific_User|update |insert ' -Max 300
+
+-----------------
+
 
 
