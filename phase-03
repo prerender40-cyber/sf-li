@@ -23,3 +23,8 @@ Invoke-SfStep '04b-manifest-count' { ([xml](Get-Content manifest/access-model.xm
 Invoke-SfStep '05-retrieve-access' { sf project retrieve start --manifest manifest/access-model.xml --target-org sf-cargill15 --wait 60 }
 
 ------------------
+
+if (Test-Path (Join-Path $SfWork 'sf-export\sfdx-project.json')) { 'Project already exists' } else { Invoke-SfStep '03-project' { sf project generate --name sf-export } }
+
+--------------------------------
+
