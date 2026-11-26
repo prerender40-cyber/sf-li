@@ -1,0 +1,31 @@
+
+
+$base = 'force-app\main\default'
+$qo = @(Import-Csv csv\queue-objects.csv)
+$trg = @(Get-ChildItem "$base\triggers\*.trigger" | ForEach-Object { $m = [regex]::Match((Get-Content $_.FullName -Raw), '(?is)trigger\s+(\w+)\s+on\s+(\w+)\s*\(([^)]*)\)'); if ($m.Success) { [pscustomobject]@{ Name = $m.Groups[1].Value; Obj = $m.Groups[2].Value; Events = ($m.Groups[3].Value -replace '\s+', ' ').Trim() } } })
+foreach ($o in 'BMCRF_GP_Invoice__c', 'SJO_Invoice__c', 'ROSPBU_Invoice__c') {
+  $d = "$base\objects\$o"
+  $n = { param($p) @(Get-ChildItem $p -File -ErrorAction SilentlyContinue).Count }
+  $ap = @(Get-ChildItem "$base\approvalProcesses" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "$o.*" }).Count
+  $fl = @(Select-String -Path "$base\flows\*.flow-meta.xml" -Pattern "<object>$o</object>" -SimpleMatch -List -ErrorAction SilentlyContinue).Count
+  $sr = 0; $sf = "$base\sharingRules\$o.sharingRules-meta.xml"
+  if (Test-Path $sf) { $sr = ([regex]::Matches((Get-Content $sf -Raw), '<sharing(Criteria|Owner)Rules>')).Count }
+  "== $o"
+  "   fields $(& $n "$d\fields") | recordTypes $(& $n "$d\recordTypes") | validationRules $(& $n "$d\validationRules") | listViews $(& $n "$d\listViews")"
+  "   approvalProcesses $ap | flows mentioning it $fl | sharingRules $sr | queues that can own it $(@($qo | Where-Object { $_.SobjectType -eq $o }).Count)"
+  "   triggers: " + ((@($trg | Where-Object { $_.Obj -eq $o }) | ForEach-Object { "$($_.Name) ($($_.Events))" }) -join '; ')
+  foreach ($f in @(Get-ChildItem "$d\fields" -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'status|estado|stage|step|etapa' })) {
+    $x = Get-Content $f.FullName -Raw
+    $vals = @([regex]::Matches($x, '<value>\s*<fullName>([^<]+)</fullName>') | ForEach-Object { $_.Groups[1].Value })
+    $type = ([regex]::Match($x, '<type>([^<]+)</type>')).Groups[1].Value
+    $name = $f.Name -replace '\.field-meta\.xml$', ''
+    if ($vals.Count) { "   * $name [$type, $($vals.Count) values]: " + (($vals | Select-Object -First 12) -join ' | ') } else { "   * $name [$type]" }
+  }
+  ''
+}
+"Triggers on other objects: $(@($trg | Where-Object { $_.Obj -notin 'BMCRF_GP_Invoice__c','SJO_Invoice__c','ROSPBU_Invoice__c' }).Count)"
+
+--------------
+
+Get-ChildItem force-app\main\default\objects -Directory | Where-Object { $_.Name -match '__c$' -and $_.Name -notmatch '^(BMCServiceDesk|CodeBuilder)__' -and $_.Name -gt 'STL_Pending_Payment__c' } | ForEach-Object { "{0} ({1})" -f $_.Name, @(Get-ChildItem (Join-Path $_.FullName 'fields') -File -ErrorAction SilentlyContinue).Count }
+
