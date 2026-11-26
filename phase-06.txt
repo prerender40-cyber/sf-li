@@ -31,7 +31,7 @@ Get-ChildItem csv\*.csv | ForEach-Object { "{0} : {1:N0} lines, {2:N1} MB" -f $_
 
 ------------------------
 
-###### 06c-premset-assign-bulk got cutoff due to line limit of 50000 so rerun below command.
+###### 06c and 06d got cutoff due to line limit of 50000 so rerun below command.
 
 Remove-Item csv\permset-assignments.csv, csv\group-members.csv
 Invoke-SfStep '06c-permset-assign-bulk' { sf data export bulk --target-org sf-cargill15 --result-format csv --output-file csv/permset-assignments.csv --wait 30 --query "SELECT Assignee.Id, Assignee.Profile.Name, Assignee.UserRole.Name, PermissionSet.Name, PermissionSet.IsOwnedByProfile, PermissionSetGroup.DeveloperName FROM PermissionSetAssignment WHERE Assignee.IsActive = true" }
