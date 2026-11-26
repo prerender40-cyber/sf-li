@@ -127,3 +127,48 @@ foreach ($q in ($qref.Keys | Sort-Object)) { "* $q : " + ($qref[$q] -join ', ') 
 
 ---------------------
 
+function Show-SfMethod {
+  param([string]$Class, [string]$Method, [int]$Max = 70,
+        [string]$Keep = 'if\s*\(|else|switch|when |return|Estado__c|Stage__c|Status__c|OwnerId|Queue|Team|Approver|update |insert |sendEmail|Database\.')
+  $path = "force-app\main\default\classes\$Class.cls"
+  if (-not (Test-Path $path)) { "!! $path not found"; return }
+  $lines = @(Get-Content $path -Encoding UTF8)
+  $sigRx = '^\s*(?:@\w+(?:\([^)]*\))?\s*)?(?:(?:public|private|protected|global|webservice|static|override|virtual)\s+)+[\w<>\[\],\.\s]+?\s+' + [regex]::Escape($Method) + '\s*\('
+  $starts = @(for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match $sigRx) { $i } })
+  if (-not $starts.Count) { "!! $Class.$Method not found"; return }
+  foreach ($s in $starts) {
+    $depth = 0; $opened = $false; $shown = 0; $kept = 0
+    "== $Class.$Method (line $($s + 1))"
+    for ($i = $s; $i -lt $lines.Count; $i++) {
+      $code = $lines[$i] -replace "'(?:[^'\\]|\\.)*'", "''" -replace '//.*$', ''
+      $depth += ([regex]::Matches($code, '\{')).Count - ([regex]::Matches($code, '\}')).Count
+      if ($code.Contains('{')) { $opened = $true }
+      $t = $lines[$i].Trim()
+      if ($i -eq $s -or ($t -match $Keep -and $t -notmatch '^\s*//')) {
+        $kept++
+        if ($shown -lt $Max) { "{0,5}: {1}" -f ($i + 1), ($(if ($t.Length -gt 150) { $t.Substring(0, 150) + '...' } else { $t })); $shown++ }
+      }
+      if ($opened -and $depth -le 0) { "   ... method ends at line $($i + 1); $kept decision lines, $shown shown"; break }
+    }
+    ''
+  }
+}
+
+----------------
+
+Show-SfMethod BMCRF_SJOInvoiceDetailsController updateStatus
+
+----------------
+
+Show-SfMethod BMCRF_SJOInvoiceDetailsController turn_down_status
+
+----------------
+
+Show-SfMethod BMCRF_SJOInvoiceDetailsController approvedAction; Show-SfMethod BMCRF_SJOInvoiceDetailsController returnAction; Show-SfMethod BMCRF_SJOInvoiceDetailsController updateCoadingStatus
+
+----------------
+
+Show-SfMethod BMCRF_GPViewInvoicesController submitForApproval
+
+----------------
+
