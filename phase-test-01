@@ -83,3 +83,47 @@ foreach ($fld in 'BMCRF_GP_Stage__c', 'BMCRF_Status__c', 'SJO_Estado__c', 'ROSPB
 
 ----------------
 
+$base = 'force-app\main\default'
+$fields = [ordered]@{ BMCRF_GP_Stage__c = 'Stage'; BMCRF_Status__c = 'Status'; SJO_Estado__c = 'Estado'; ROSPBU_Estado__c = 'Estado' }
+$qo = @(Import-Csv csv\queue-objects.csv | Where-Object { $_.SobjectType -in 'BMCRF_GP_Invoice__c', 'SJO_Invoice__c', 'ROSPBU_Invoice__c' })
+$queues = @($qo | Sort-Object 'Queue.Name' -Unique)
+$sig = '^\s*(?:@\w+(?:\([^)]*\))?\s*)?(?:(?:public|private|protected|global|webservice|static|override|virtual)\s+)+[\w<>\[\],\.\s]+?\s+(\w+)\s*\([^;]*$'
+$rows = @{}; $qref = @{}
+$files = @(Get-ChildItem "$base\classes\*.cls", "$base\triggers\*.trigger" | Where-Object { $_.BaseName -notmatch 'test' } | Where-Object { Select-String -Path $_.FullName -Pattern 'BMCRF_GP_Invoice__c|SJO_Invoice__c|ROSPBU_Invoice__c|BMCRF_GP_Stage__c|SJO_Estado__c|ROSPBU_Estado__c' -Quiet })
+foreach ($file in $files) {
+  $isGp = [bool](Select-String -Path $file.FullName -Pattern 'BMCRF_GP_Invoice__c' -SimpleMatch -Quiet)
+  $method = '(top)'
+  if ($file.Extension -eq '.trigger') { $method = 'trigger' }
+  foreach ($line in (Get-Content $file.FullName -Encoding UTF8)) {
+    $m = [regex]::Match($line, $sig)
+    if ($m.Success -and $file.Extension -eq '.cls') { $method = $m.Groups[1].Value }
+    $key = "$($file.BaseName).$method"
+    foreach ($fld in $fields.Keys) {
+      if (-not $line.Contains($fld)) { continue }
+      if ($fld -eq 'BMCRF_Status__c' -and -not $isGp) { continue }
+      if (-not $rows[$key]) { $rows[$key] = @{ sets = [System.Collections.Generic.List[string]]::new(); checks = [System.Collections.Generic.List[string]]::new() } }
+      foreach ($a in [regex]::Matches($line, [regex]::Escape($fld) + "\s*=(?!=)\s*'([^']*)'")) { $v = "$($fields[$fld])[$($a.Groups[1].Value)]"; if (-not $rows[$key].sets.Contains($v)) { $rows[$key].sets.Add($v) } }
+      foreach ($c in [regex]::Matches($line, [regex]::Escape($fld) + "\s*(?:==|!=)\s*'([^']*)'|" + [regex]::Escape($fld) + "\s*\)?\.equals(?:IgnoreCase)?\(\s*'([^']*)'")) { $v = "$($fields[$fld])[$($c.Groups[1].Value)$($c.Groups[2].Value)]"; if (-not $rows[$key].checks.Contains($v)) { $rows[$key].checks.Add($v) } }
+    }
+    foreach ($qq in $queues) {
+      $q = $qq.'Queue.Name'
+      if ($line.Contains("'$q'") -or $line.Contains("'$($qq.'Queue.DeveloperName')'")) { if (-not $qref[$q]) { $qref[$q] = [System.Collections.Generic.List[string]]::new() }; if (-not $qref[$q].Contains($key)) { $qref[$q].Add($key) } }
+    }
+  }
+}
+"Scanned $($files.Count) non-test classes and triggers that use the three invoice objects"
+''
+'== 1. Methods that SET a status (checks = statuses it tests for in the same method)'
+foreach ($k in ($rows.Keys | Sort-Object)) {
+  $r = $rows[$k]
+  if ($r.sets.Count -eq 0) { continue }
+  $chk = if ($r.checks.Count) { '  <- checks ' + ($r.checks -join ', ') } else { '' }
+  "* $k : sets " + ($r.sets -join ', ') + $chk
+}
+''
+'== 2. Queues named in code'
+foreach ($q in ($qref.Keys | Sort-Object)) { "* $q : " + ($qref[$q] -join ', ') }
+"Queues never named in code: " + ((@($queues | ForEach-Object { $_.'Queue.Name' } | Where-Object { -not $qref[$_] })) -join ' | ')
+
+---------------------
+
