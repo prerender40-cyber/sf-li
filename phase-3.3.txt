@@ -1,0 +1,26 @@
+
+New-Item -ItemType Directory -Force csv | Out-Null
+Invoke-SfStep '06a-object-perms' { sf data query --target-org sf-cargill15 --result-format csv --output-file csv/object-permissions.csv --query "SELECT Parent.Name, Parent.Label, Parent.IsOwnedByProfile, Parent.Profile.Name, SobjectType, PermissionsRead, PermissionsCreate, PermissionsEdit, PermissionsDelete, PermissionsViewAllRecords, PermissionsModifyAllRecords FROM ObjectPermissions" }
+Invoke-SfStep '06b-field-perms' { sf data export bulk --target-org sf-cargill15 --result-format csv --output-file csv/field-permissions.csv --wait 30 --query "SELECT Parent.Name, Parent.IsOwnedByProfile, Parent.Profile.Name, SobjectType, Field, PermissionsRead, PermissionsEdit FROM FieldPermissions" }
+Invoke-SfStep '06c-permset-assign' { sf data query --target-org sf-cargill15 --result-format csv --output-file csv/permset-assignments.csv --query "SELECT Assignee.Id, Assignee.Profile.Name, Assignee.UserRole.Name, PermissionSet.Name, PermissionSet.IsOwnedByProfile, PermissionSetGroup.DeveloperName FROM PermissionSetAssignment WHERE Assignee.IsActive = true" }
+Invoke-SfStep '06d-group-members' { sf data query --target-org sf-cargill15 --result-format csv --output-file csv/group-members.csv --query "SELECT Group.Name, Group.DeveloperName, Group.Type, UserOrGroupId FROM GroupMember" }
+Invoke-SfStep '06e-queue-objects' { sf data query --target-org sf-cargill15 --result-format csv --output-file csv/queue-objects.csv --query "SELECT Queue.Name, Queue.DeveloperName, SobjectType FROM QueueSobject" }
+Invoke-SfStep '06f-roles' { sf data query --target-org sf-cargill15 --result-format csv --output-file csv/roles.csv --query "SELECT Id, Name, DeveloperName, ParentRoleId FROM UserRole" }
+Invoke-SfStep '06g-org-defaults' { sf data query --target-org sf-cargill15 --result-format csv --output-file csv/org-wide-defaults.csv --query "SELECT QualifiedApiName, Label, InternalSharingModel, ExternalSharingModel FROM EntityDefinition WHERE IsCustomizable = true" }
+Invoke-SfStep '06h-profiles' { sf data query --target-org sf-cargill15 --result-format csv --output-file csv/profiles.csv --query "SELECT Id, Name, UserLicense.Name FROM Profile" }
+Invoke-SfStep '06i-permset-groups' { sf data query --target-org sf-cargill15 --result-format csv --output-file csv/permset-group-components.csv --query "SELECT PermissionSetGroup.DeveloperName, PermissionSet.Name FROM PermissionSetGroupComponent" }
+Invoke-SfStep '06j-setup-access' { sf data query --target-org sf-cargill15 --result-format csv --output-file csv/setup-entity-access.csv --query "SELECT Parent.Name, Parent.IsOwnedByProfile, Parent.Profile.Name, SetupEntityType, SetupEntityId FROM SetupEntityAccess" }
+Invoke-SfStep '06l-record-types' { sf data query --target-org sf-cargill15 --result-format csv --output-file csv/record-types.csv --query "SELECT SobjectType, DeveloperName, Name, IsActive FROM RecordType" }
+Invoke-SfStep '06m-flows' { sf data query --target-org sf-cargill15 --result-format csv --output-file csv/flows.csv --query "SELECT ApiName, Label, ProcessType, TriggerType, IsActive FROM FlowDefinitionView" }
+Invoke-SfStep '06n-validation-rules' { sf data query --use-tooling-api --target-org sf-cargill15 --result-format csv --output-file csv/validation-rules.csv --query "SELECT EntityDefinition.QualifiedApiName, ValidationName, Active, ErrorDisplayField, ErrorMessage, Description FROM ValidationRule" }
+Invoke-SfStep '06o-user-counts' { sf data query --target-org sf-cargill15 --result-format csv --output-file csv/user-counts.csv --query "SELECT Profile.Name, UserRole.Name, COUNT(Id) FROM User WHERE IsActive = true GROUP BY Profile.Name, UserRole.Name" }
+
+-----------------------
+
+Get-SfHistory
+
+-----------------------
+
+Get-ChildItem csv\*.csv | ForEach-Object { "{0} : {1:N0} lines, {2:N1} MB" -f $_.Name, (Get-Content $_.FullName | Measure-Object -Line).Lines, ($_.Length / 1MB) }; Get-ChildItem force-app\main\default -Directory | ForEach-Object { "{0} : {1}" -f $_.Name, @(Get-ChildItem $_.FullName -Recurse -File).Count }
+
+------------------------
