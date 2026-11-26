@@ -191,5 +191,15 @@ Show-SfMethod BMCRF_SJOInvoiceDetailsController saveInvoiceDetails -Keep 'if\s*\
 
 -----------------
 
+$l = Get-Content force-app\main\default\classes\BMCRF_SJOInvoiceDetailsController.cls -Encoding UTF8; 1580..1668 | ForEach-Object { "{0,5}: {1}" -f $_, $l[$_ - 1].Trim() } | Where-Object { $_ -notmatch ':\s*$' }
+
+-----------------
+
+Get-ChildItem force-app\main\default\objects\SJO_Configuration_Data__c\fields -File | ForEach-Object { $x = Get-Content $_.FullName -Raw; "{0} [{1}] {2} {3}" -f ($_.Name -replace '\.field-meta\.xml$',''), ([regex]::Match($x,'<type>([^<]+)')).Groups[1].Value, ([regex]::Match($x,'<label>([^<]+)')).Groups[1].Value, ([regex]::Match($x,'<referenceTo>([^<]+)')).Groups[1].Value }
+
+-----------------
+
+Show-SfMethod BMCRF_GPInvoiceDetailsController saveInvoiceDetails -Keep 'if\s*\(|Stage__c|Status__c|OwnerId|Team|Process__c|Need_Approval|update ' -Max 400
+
 
 
