@@ -3,3 +3,7 @@ Invoke-SfStep '08-retrieve-code' { sf project retrieve start --manifest manifest
 
 --------------------
 
+Invoke-SfStep '08b-code-count' { foreach ($f in 'classes','triggers','pages','components','lwc','aura','staticresources','labels') { $p = "force-app\main\default\$f"; if (Test-Path $p) { "{0} : {1} files" -f $f, @(Get-ChildItem $p -Recurse -File).Count } else { "{0} : (none)" -f $f } } }
+
+--------------------
+
