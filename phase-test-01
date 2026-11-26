@@ -211,3 +211,37 @@ Show-SfMethod BMCRF_GPGlucovilInvoiceDetailsController saveInvoiceDetails -Keep 
 
 -----------------
 
+$objs = 'BMCRF_GP_Invoice__c', 'SJO_Invoice__c', 'ROSPBU_Invoice__c'
+$short = @{ BMCRF_GP_Invoice__c = 'GP'; SJO_Invoice__c = 'SJO'; ROSPBU_Invoice__c = 'ROSPBU' }
+$assign = @{}
+Import-Csv csv\permset-assignments.csv | ForEach-Object { $assign[$_.'PermissionSet.Name'] = 1 + [int]$assign[$_.'PermissionSet.Name'] }
+$flag = { param($r) (@(if ($r.PermissionsRead -eq 'true') { 'R' }; if ($r.PermissionsCreate -eq 'true') { 'C' }; if ($r.PermissionsEdit -eq 'true') { 'E' }; if ($r.PermissionsDelete -eq 'true') { 'D' }; if ($r.PermissionsViewAllRecords -eq 'true') { 'VA' }; if ($r.PermissionsModifyAllRecords -eq 'true') { 'MA' }) -join '') }
+'== 1. Who can access each invoice object (P = profile, S = permission set; users = active assignees)'
+$op = @(Import-Csv csv\object-permissions.csv | Where-Object { $_.SobjectType -in $objs })
+foreach ($o in $objs) {
+  "-- $($short[$o])"
+  $op | Where-Object { $_.SobjectType -eq $o } | ForEach-Object {
+    $isP = $_.'Parent.IsOwnedByProfile' -eq 'true'
+    [pscustomobject]@{ Kind = $(if ($isP) { 'P' } else { 'S' }); Name = $(if ($isP) { $_.'Parent.Profile.Name' } else { $_.'Parent.Name' }); Access = (& $flag $_); Users = [int]$assign[$_.'Parent.Name'] }
+  } | Sort-Object Users -Descending | ForEach-Object { "   {0} {1,-9} {2,5} users  {3}" -f $_.Kind, $_.Access, $_.Users, $_.Name }
+}
+''
+'== 2. Team queues and sharing groups: members (U = users, G = nested groups/roles)'
+$gm = @(Import-Csv csv\group-members.csv | Where-Object { $_.'Group.DeveloperName' -match '^(GP|SJO|ROSPBU|BMCRF_GP|BMCRF_SJO|BMCRF_ROSPBU|Malt)' })
+$gm | Group-Object { "$($_.'Group.Type')|$($_.'Group.DeveloperName')" } | Sort-Object Name | ForEach-Object {
+  $u = @($_.Group | Where-Object { $_.UserOrGroupId -like '005*' }).Count
+  "   {0,-8} {1,-45} U {2,4}  G {3,3}" -f $_.Name.Split('|')[0], $_.Name.Split('|')[1], $u, ($_.Count - $u)
+}
+
+------------------
+
+$sig = '^\s*(?:@\w+(?:\([^)]*\))?\s*)?(?:(?:public|private|protected|global|webservice|static|override|virtual)\s+)+[\w<>\[\],\.\s]+?\s+(\w+)\s*\([^;]*$'
+$get = { param($c) @(Get-Content "force-app\main\default\classes\$c.cls" -Encoding UTF8 | ForEach-Object { $m = [regex]::Match($_, $sig); if ($m.Success) { $m.Groups[1].Value } } | Sort-Object -Unique) }
+$s = & $get 'BMCRF_SJOInvoiceDetailsController'
+$r = & $get 'BMCRF_ROSPBUInvoiceDetailsController'
+"SJO methods: $($s.Count)  ROSPBU methods: $($r.Count)  in both: $(@($s | Where-Object { $_ -in $r }).Count)"
+'Only in ROSPBU: ' + ((@($r | Where-Object { $_ -notin $s })) -join ', ')
+'Only in SJO:    ' + ((@($s | Where-Object { $_ -notin $r })) -join ', ')
+
+------------------
+
