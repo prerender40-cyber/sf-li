@@ -1,0 +1,9 @@
+
+Invoke-SfStep '05-retrieve-access' { sf project retrieve start --manifest manifest/access-model.xml --target-org sf-cargill15 --wait 60 }
+
+-------------------
+
+Invoke-SfStep '05b-retrieve-count' { Get-ChildItem force-app\main\default -Directory | ForEach-Object { "{0} : {1}" -f $_.Name, @(Get-ChildItem $_.FullName -Recurse -File).Count } }
+
+-------------------
+
