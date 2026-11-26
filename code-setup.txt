@@ -55,7 +55,7 @@ function Invoke-SfStep {
     $log = Join-Path $global:SfLogDir "$stamp-$safeName.log"
     @(
         "STEP    : $Name",
-        "COMMAND : $($Command.ToString().Trim())",
+        "COMMAND : $(($Command.ToString().Trim() -replace '\s*\r?\n\s*', ' ; '))",
         "FOLDER  : $((Get-Location).Path)",
         "STARTED : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
         '----- output -----'
@@ -131,8 +131,10 @@ function Get-SfReport {
             $out.Add("--- $($s.Step) | exit $($s.Exit) | $($s.Time) | $($s.Seconds) s ---")
             if (-not (Test-Path $path)) { $out.Add("(log file missing: $($s.Log))"); continue }
             $content = @(Get-Content -Path $path -Encoding UTF8)
-            $content | Select-Object -First 4 | ForEach-Object { $out.Add($_) }
-            $body = @($content | Select-Object -Skip 5)
+            $marker = [Array]::IndexOf($content, '----- output -----')
+            if ($marker -lt 0) { $marker = 4 }
+            $content | Select-Object -First $marker | ForEach-Object { $out.Add($_) }
+            $body = @($content | Select-Object -Skip ($marker + 1))
             if ($body.Count -gt $Lines) { $out.Add("... ($($body.Count - $Lines) earlier lines cut) ...") }
             $body | Select-Object -Last $Lines | ForEach-Object { $out.Add($_) }
         }
@@ -179,7 +181,7 @@ function Test-SfSetup {
         if (Get-Command sf -ErrorAction SilentlyContinue) { sf --version }
         if (Get-Command java -ErrorAction SilentlyContinue) { java -version }
         if (Get-Command code -ErrorAction SilentlyContinue) { 'VS Code Salesforce extensions installed:'; code --list-extensions | Where-Object { $_ -match 'salesforce' } }
-        foreach ($u in 'https://login.salesforce.com', 'https://test.salesforce.com', 'https://registry.npmjs.org', 'https://marketplace.visualstudio.com') {
+        foreach ($u in 'https://login.salesforce.com', 'https://test.salesforce.com', 'https://registry.npmjs.org') {
             try {
                 $r = Invoke-WebRequest -Uri $u -Method Head -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop
                 "$u : reachable ($($r.StatusCode))"
