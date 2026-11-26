@@ -305,4 +305,4 @@ Invoke-SfStep '01b-org-list' { sf org list }
 
 ------------------------------------------------------------------------------------------------
 
-Invoke-SfStep '02-my-permissions' { sf data query --target-org sf-prod --query "SELECT PermissionSet.Label, PermissionSet.IsOwnedByProfile, PermissionSet.PermissionsApiEnabled, PermissionSet.PermissionsViewSetup, PermissionSet.PermissionsViewAllData, PermissionSet.PermissionsModifyAllData, PermissionSet.PermissionsModifyMetadata, PermissionSet.PermissionsAuthorApex FROM PermissionSetAssignment WHERE Assignee.Username = 'rishabh_patil@crgl-thirdparty.com.cargill15.cargill15'" }
+Invoke-SfStep '02-my-permissions' { sf data query --target-org sf-cargill15 --query "SELECT PermissionSet.Label, PermissionSet.IsOwnedByProfile, PermissionSet.PermissionsApiEnabled, PermissionSet.PermissionsViewSetup, PermissionSet.PermissionsViewAllData, PermissionSet.PermissionsModifyAllData, PermissionSet.PermissionsModifyMetadata, PermissionSet.PermissionsAuthorApex FROM PermissionSetAssignment WHERE Assignee.Username = 'rishabh_patil@crgl-thirdparty.com.cargill15.cargill15'" }
