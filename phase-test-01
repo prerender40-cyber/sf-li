@@ -29,3 +29,57 @@ foreach ($o in 'BMCRF_GP_Invoice__c', 'SJO_Invoice__c', 'ROSPBU_Invoice__c') {
 
 Get-ChildItem force-app\main\default\objects -Directory | Where-Object { $_.Name -match '__c$' -and $_.Name -notmatch '^(BMCServiceDesk|CodeBuilder)__' -and $_.Name -gt 'STL_Pending_Payment__c' } | ForEach-Object { "{0} ({1})" -f $_.Name, @(Get-ChildItem (Join-Path $_.FullName 'fields') -File -ErrorAction SilentlyContinue).Count }
 
+--------------
+
+$base = 'force-app\main\default'
+$objs = 'BMCRF_GP_Invoice__c', 'SJO_Invoice__c', 'ROSPBU_Invoice__c'
+$short = @{ BMCRF_GP_Invoice__c = 'GP'; SJO_Invoice__c = 'SJO'; ROSPBU_Invoice__c = 'ROSPBU' }
+$rx = { param($t, $s) ([regex]::Match($s, $t)).Groups[1].Value }
+'== 1. All status values'
+foreach ($p in 'BMCRF_GP_Invoice__c\fields\BMCRF_GP_Stage__c', 'BMCRF_GP_Invoice__c\fields\BMCRF_Status__c', 'SJO_Invoice__c\fields\SJO_Estado__c', 'ROSPBU_Invoice__c\fields\ROSPBU_Estado__c') {
+  $x = Get-Content "$base\objects\$p.field-meta.xml" -Raw
+  $v = @([regex]::Matches($x, '<value>\s*<fullName>([^<]+)</fullName>') | ForEach-Object { $_.Groups[1].Value })
+  "* $(Split-Path $p -Leaf) ($($v.Count)): " + ($v -join ' | ')
+}
+''
+'== 2. Flows (T = runs when the record is saved, U = only reads/updates it)'
+foreach ($f in Get-ChildItem "$base\flows\*.flow-meta.xml") {
+  $x = Get-Content $f.FullName -Raw
+  $st = & $rx '(?s)<start>(.*?)</start>' $x
+  foreach ($o in $objs) {
+    if ($x.Contains("<object>$o</object>")) {
+      $kind = if ($st.Contains("<object>$o</object>")) { 'T' } else { 'U' }
+      "* {0,-6} {1} {2} [{3}, {4}, {5} {6}]" -f $short[$o], $kind, ($f.Name -replace '\.flow-meta\.xml$', ''), (& $rx '(?m)^\s{4}<processType>([^<]+)' $x), (& $rx '(?m)^\s{4}<status>([^<]+)' $x), (& $rx '<recordTriggerType>([^<]+)' $st), (& $rx '<triggerType>([^<]+)' $st)
+    }
+  }
+}
+''
+'== 3. Queues that can own the invoices'
+$qo = @(Import-Csv csv\queue-objects.csv)
+foreach ($o in $objs) {
+  $q = @($qo | Where-Object { $_.SobjectType -eq $o } | ForEach-Object { $_.'Queue.Name' } | Sort-Object)
+  "* $($short[$o]) ($($q.Count)): " + ($q -join ' | ')
+}
+''
+'== 4. Sharing rules'
+foreach ($o in $objs) {
+  $sf = "$base\sharingRules\$o.sharingRules-meta.xml"
+  if (-not (Test-Path $sf)) { continue }
+  foreach ($m in [regex]::Matches((Get-Content $sf -Raw), '(?s)<sharing(Criteria|Owner)Rules>(.*?)</sharing(Criteria|Owner)Rules>')) {
+    $b = $m.Groups[2].Value
+    $to = [regex]::Match($b, '(?s)<sharedTo>\s*<(\w+)>([^<]+)')
+    $from = [regex]::Match($b, '(?s)<sharedFrom>\s*<(\w+)>([^<]+)')
+    $crit = @([regex]::Matches($b, '(?s)<criteriaItems>\s*<field>([^<]+)</field>\s*<operation>([^<]+)</operation>\s*<value>([^<]*)</value>') | ForEach-Object { "$($_.Groups[1].Value) $($_.Groups[2].Value) '$($_.Groups[3].Value)'" }) -join ' AND '
+    $when = if ($m.Groups[1].Value -eq 'Owner') { "owned by $($from.Groups[1].Value):$($from.Groups[2].Value)" } else { "where $crit" }
+    "* {0,-6} {1} -> {2}:{3} [{4}] {5}" -f $short[$o], (& $rx '<fullName>([^<]+)' $b), $to.Groups[1].Value, $to.Groups[2].Value, (& $rx '<accessLevel>([^<]+)' $b), $when
+  }
+}
+''
+'== 5. Own code that uses each status field (file name and number of lines, top 8)'
+foreach ($fld in 'BMCRF_GP_Stage__c', 'BMCRF_Status__c', 'SJO_Estado__c', 'ROSPBU_Estado__c') {
+  $hits = @(Select-String -Path "$base\classes\*.cls", "$base\triggers\*.trigger", "$base\pages\*.page" -Pattern $fld -SimpleMatch -ErrorAction SilentlyContinue | Group-Object Filename | Sort-Object Count -Descending)
+  "* $fld in $($hits.Count) files: " + (($hits | Select-Object -First 8 | ForEach-Object { "$($_.Name)($($_.Count))" }) -join ', ')
+}
+
+----------------
+
