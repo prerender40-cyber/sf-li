@@ -1,0 +1,10 @@
+
+Invoke-SfStep '07-manifest-code' { sf project generate manifest --from-org sf-cargill15 --metadata "ApexClass,ApexTrigger,ApexPage,ApexComponent,LightningComponentBundle,AuraDefinitionBundle,StaticResource,CustomLabels" --name code --output-dir manifest }
+Invoke-SfStep '07b-manifest-code-count' { ([xml](Get-Content manifest/code.xml)).Package.types | ForEach-Object { "{0} : {1}" -f $_.name, @($_.members).Count } }
+
+-----------------
+
+Get-ChildItem csv\permset-assignments.csv, csv\group-members.csv | ForEach-Object { "{0} : {1:N0} lines" -f $_.Name, (Get-Content $_.FullName | Measure-Object -Line).Lines }; Get-Content (Get-ChildItem $SfWork\logs\*07b-manifest-code-count.log | Select-Object -Last 1).FullName
+
+-----------------
+
