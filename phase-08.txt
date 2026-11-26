@@ -7,3 +7,11 @@ Invoke-SfStep '08b-code-count' { foreach ($f in 'classes','triggers','pages','co
 
 --------------------
 
+Get-ChildItem force-app\main\default\objects -Directory | Where-Object { $_.Name -match '__c$' -and $_.Name -notmatch '^(BMCServiceDesk|CodeBuilder)__' } | ForEach-Object { "{0} ({1})" -f $_.Name, @(Get-ChildItem (Join-Path $_.FullName 'fields') -File -ErrorAction SilentlyContinue).Count } | Format-Wide { $_ } -Column 3
+
+--------------------
+
+Get-ChildItem force-app\main\default\classes, force-app\main\default\pages, force-app\main\default\triggers, force-app\main\default\components -File | Where-Object { $_.Extension -ne '.xml' -and $_.BaseName -match 'invoice|factura|ros|sjo|gp|ccpp|vendor|payment|clac' } | ForEach-Object { "{0}/{1}" -f $_.Directory.Name, $_.Name } | Sort-Object | Format-Wide { $_ } -Column 3
+
+--------------------
+
