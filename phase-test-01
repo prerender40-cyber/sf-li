@@ -245,3 +245,12 @@ $r = & $get 'BMCRF_ROSPBUInvoiceDetailsController'
 
 ------------------
 
+Invoke-SfStep '07u-gp-process' { sf data query --target-org sf-cargill15 --query "SELECT BMCRF_Change_Process__c process, COUNT(Id) n FROM BMCRF_GP_Invoice__c WHERE CreatedDate = LAST_N_DAYS:365 GROUP BY BMCRF_Change_Process__c" }
+Invoke-SfStep '07u-gp-stage' { sf data query --target-org sf-cargill15 --query "SELECT BMCRF_GP_Stage__c stage, COUNT(Id) n FROM BMCRF_GP_Invoice__c WHERE CreatedDate = LAST_N_DAYS:365 GROUP BY BMCRF_GP_Stage__c" }
+Invoke-SfStep '07u-sjo-type' { sf data query --target-org sf-cargill15 --query "SELECT SJO_Tipo_de_registro__c tipo, SJO_Estado__c estado, COUNT(Id) n FROM SJO_Invoice__c WHERE CreatedDate = LAST_N_DAYS:365 GROUP BY SJO_Tipo_de_registro__c, SJO_Estado__c" }
+Invoke-SfStep '07u-rospbu-status' { sf data query --target-org sf-cargill15 --query "SELECT ROSPBU_Estado__c estado, COUNT(Id) n FROM ROSPBU_Invoice__c WHERE CreatedDate = LAST_N_DAYS:365 GROUP BY ROSPBU_Estado__c" }
+Invoke-SfStep '07u-owd' { Import-Csv csv\org-wide-defaults.csv | Where-Object { $_.QualifiedApiName -in 'BMCRF_GP_Invoice__c', 'SJO_Invoice__c', 'ROSPBU_Invoice__c' } | Format-Table -AutoSize | Out-String }
+Get-SfReport -IncludeOk -Steps 5 -Lines 60
+
+------------------
+
