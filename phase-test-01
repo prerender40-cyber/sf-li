@@ -172,3 +172,20 @@ Show-SfMethod BMCRF_GPViewInvoicesController submitForApproval
 
 ----------------
 
+#### Load Show-SfMethod again first if this is a new PowerShell window.
+
+Show-SfMethod BMCRF_SJOInvoiceDetailsController updateStatus -Keep 'if\s*\(|SelectOption' -Max 300
+
+---
+
+Show-SfMethod BMCRF_SJOInvoiceDetailsController updateCoadingStatus -Keep '\S'
+
+---
+
+$x = Get-Content force-app\main\default\objects\BMCRF_GP_Invoice__c\fields\BMCRF_Change_Process__c.field-meta.xml -Raw; ([regex]::Matches($x, '<value>\s*<fullName>([^<]+)</fullName>') | ForEach-Object { $_.Groups[1].Value }) -join ' | '
+
+---
+-----------------
+
+
+
