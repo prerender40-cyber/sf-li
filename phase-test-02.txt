@@ -1,0 +1,45 @@
+
+$me = (sf org display user --target-org sf-cargill15 --json | ConvertFrom-Json).result
+$uid = "$($me.id)".Substring(0, 15)
+$mySets = @(Import-Csv csv\permset-assignments.csv | Where-Object { "$($_.'Assignee.Id')".StartsWith($uid) })
+$names = @($mySets | ForEach-Object { $_.'PermissionSet.Name' } | Sort-Object -Unique)
+"== 1. My profile: $($me.profileName) | permission sets incl. profile: $($names.Count)"
+'   ' + ((@($mySets | Where-Object { $_.'PermissionSet.IsOwnedByProfile' -ne 'true' } | ForEach-Object { $_.'PermissionSet.Name' } | Sort-Object -Unique)) -join ', ')
+$objs = 'SJO_Invoice__c', 'ROSPBU_Invoice__c', 'BMCRF_GP_Invoice__c', 'SJO_Configuration_Data__c'
+$fp = @(Import-Csv csv\field-permissions.csv | Where-Object { $_.SobjectType -in $objs -and $_.PermissionsRead -eq 'true' })
+foreach ($o in $objs) {
+  $total = @(Get-ChildItem "force-app\main\default\objects\$o\fields" -File -ErrorAction SilentlyContinue).Count
+  $mine = @($fp | Where-Object { $_.SobjectType -eq $o -and $_.'Parent.Name' -in $names } | ForEach-Object Field | Sort-Object -Unique).Count
+  "   {0,-27} fields I can read: {1,4} of {2,4}" -f $o, $mine, $total
+}
+'   Permission sets / profiles that grant read on the most SJO_Invoice__c fields (top 6):'
+$fp | Where-Object { $_.SobjectType -eq 'SJO_Invoice__c' } | Group-Object { if ($_.'Parent.IsOwnedByProfile' -eq 'true') { 'P ' + $_.'Parent.Profile.Name' } else { 'S ' + $_.'Parent.Name' } } |
+  Sort-Object Count -Descending | Select-Object -First 6 | ForEach-Object { "     {0,4} fields  {1}" -f $_.Count, $_.Name }
+''
+'== 2. Where the role flags are set (previous line shown for context)'
+$cls = 'BMCRF_SJOInvoiceDetailsController', 'BMCRF_ROSPBUInvoiceDetailsController', 'BMCRF_GPInvoiceDetailsController'
+Select-String -Path ($cls | ForEach-Object { "force-app\main\default\classes\$_.cls" }) -Context 1, 0 `
+  -Pattern '\b(is\w*User\w*|isVIP|isSuperUser|isPlanta|isCommercial|isAdministraive|isusarioBuUser)\s*=(?!=)\s*true' |
+  Select-Object -First 60 | ForEach-Object {
+    $p = if ($_.Context.PreContext) { $_.Context.PreContext[0].Trim() } else { '' }
+    $t = $_.Line.Trim(); if ($p.Length -gt 110) { $p = $p.Substring(0, 110) + '...' }
+    "{0}:{1}  {2}  ||  {3}" -f ($_.Filename -replace 'InvoiceDetailsController\.cls', ''), $_.LineNumber, $p, $t
+  }
+''
+'== 3. SJO_Configuration_Data__c in the sandbox'
+Invoke-SfStep '08c-sjo-config' { sf data query --target-org sf-cargill15 --result-format csv --output-file csv/sjo-config.csv --query "SELECT Type__c, SJO_Pais_Config__c, SJO_BU_Config__c, SJO_Subproceso__c, Operator__c, SJO_Thresold__c, SJO_Approver__c, SJO_Delegated_Approver__c, SJO_Order__c FROM SJO_Configuration_Data__c" }
+if (Test-Path csv\sjo-config.csv) {
+  $cfg = @(Import-Csv csv\sjo-config.csv)
+  "   rows: $($cfg.Count)   by Type: " + ((@($cfg | Group-Object Type__c | ForEach-Object { "$($_.Name)=$($_.Count)" })) -join ', ')
+  $ap = @($cfg | Where-Object { $_.SJO_Approver__c })
+  "   approver rows: $($ap.Count) (with a delegate: $(@($ap | Where-Object { $_.SJO_Delegated_Approver__c }).Count), with an order: $(@($ap | Where-Object { $_.SJO_Order__c }).Count))"
+  $ap | Group-Object { "$($_.SJO_Pais_Config__c) | $($_.SJO_BU_Config__c) | $($_.SJO_Subproceso__c)" } | Sort-Object Name | Select-Object -First 25 | ForEach-Object {
+    "   {0,-55} {1,2} rows: {2}" -f $_.Name, $_.Count, ((@($_.Group | ForEach-Object { "$($_.Operator__c) $($_.SJO_Thresold__c)".Trim() })) -join '; ')
+  }
+}
+''
+'== 4. ROSPBU_Configuration_Data__c fields (to compare with SJO)'
+Get-ChildItem force-app\main\default\objects\ROSPBU_Configuration_Data__c\fields -File | ForEach-Object { $x = Get-Content $_.FullName -Raw; "{0} [{1}] {2}" -f ($_.Name -replace '\.field-meta\.xml$', ''), ([regex]::Match($x, '<type>([^<]+)')).Groups[1].Value, ([regex]::Match($x, '<referenceTo>([^<]+)')).Groups[1].Value }
+
+-------------------------
+
