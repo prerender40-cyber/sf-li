@@ -101,6 +101,58 @@ if (Test-Path csv\sjo-config.csv) {
 
 --------------------
 
-
+$obj = 'SJO_Configuration_Data__c'
+if (-not $names) {
+  $me = (sf org display user --target-org sf-cargill15 --json | ConvertFrom-Json).result
+  $uid = "$($me.id)".Substring(0, 15)
+  $names = @(Import-Csv csv\permset-assignments.csv | Where-Object { "$($_.'Assignee.Id')".StartsWith($uid) } | ForEach-Object { $_.'PermissionSet.Name' } | Sort-Object -Unique)
+}
+if (-not $readable) {
+  $readable = @(Import-Csv csv\field-permissions.csv | Where-Object { $_.SobjectType -eq $obj -and $_.PermissionsRead -eq 'true' -and $_.'Parent.Name' -in $names } | ForEach-Object { ($_.Field -split '\.')[1] } | Sort-Object -Unique)
+}
+function Get-SfCount([string]$Where) {
+  $r = sf data query --target-org sf-cargill15 --json --query "SELECT COUNT() FROM $obj $Where" 2>$null | ConvertFrom-Json
+  if ($r.status -eq 0) { '{0:N0}' -f [long]$r.result.totalSize } else { 'ERROR: ' + "$($r.message)".Split("`n")[0] }
+}
+'== 1. Rows per Type__c'
+$tx = Get-Content "force-app\main\default\objects\$obj\fields\Type__c.field-meta.xml" -Raw
+$types = @([regex]::Matches($tx, '<fullName>([^<]+)</fullName>') | ForEach-Object { $_.Groups[1].Value } | Where-Object { $_ -ne 'Type__c' })
+foreach ($t in $types) { "   {0,-40} {1}" -f $t, (Get-SfCount "WHERE Type__c = '$($t -replace "'", "\'")'") }
+"   {0,-40} {1}" -f '(empty)', (Get-SfCount 'WHERE Type__c = null')
+"   {0,-40} {1}" -f 'rows with an approver', (Get-SfCount 'WHERE SJO_Approver__c != null')
+''
+'== 2. Rows per year created'
+$r = sf data query --target-org sf-cargill15 --json --query "SELECT CALENDAR_YEAR(CreatedDate) yr, COUNT(Id) n FROM $obj GROUP BY CALENDAR_YEAR(CreatedDate) ORDER BY CALENDAR_YEAR(CreatedDate)" 2>$null | ConvertFrom-Json
+if ($r.status -eq 0) { $r.result.records | ForEach-Object { "   {0}  {1,12:N0}" -f $_.yr, [long]$_.n } } else { '   ERROR: ' + "$($r.message)".Split("`n")[0] }
+''
+'== 3. Approver rows'
+$cols = @('Type__c', 'SJO_Pais_Config__c', 'SJO_BU_Config__c', 'SJO_Subproceso__c', 'Operator__c', 'SJO_Thresold__c', 'SJO_Approver__c', 'SJO_Delegated_Approver__c', 'SJO_Order__c') | Where-Object { $_ -in $readable -or $_ -eq 'Type__c' }
+Invoke-SfStep '08c-sjo-approvers' { sf data query --target-org sf-cargill15 --result-format csv --output-file csv/sjo-approvers.csv --query "SELECT $($cols -join ', ') FROM $obj WHERE SJO_Approver__c != null LIMIT 5000" }
+if (Test-Path csv\sjo-approvers.csv) {
+  $ap = @(Import-Csv csv\sjo-approvers.csv -Encoding UTF8)
+  "   approver rows: $($ap.Count)   by Type: " + ((@($ap | Group-Object Type__c | ForEach-Object { "$($_.Name)=$($_.Count)" })) -join ', ')
+  "   with a delegate: $(@($ap | Where-Object { $_.SJO_Delegated_Approver__c }).Count)   distinct approvers: $(@($ap | Select-Object -ExpandProperty SJO_Approver__c -Unique).Count)"
+  "   operators used: " + ((@($ap | Group-Object Operator__c | ForEach-Object { "$(if ($_.Name) { $_.Name } else { '(empty)' })=$($_.Count)" })) -join ', ')
+  $groups = @($ap | Group-Object { "$($_.SJO_Pais_Config__c) | $($_.SJO_BU_Config__c) | $($_.SJO_Subproceso__c)" })
+  "   country|BU|sub-process combinations: $($groups.Count); with 2+ rows: $(@($groups | Where-Object Count -gt 1).Count)"
+  $groups | Sort-Object Name | Select-Object -First 25 | ForEach-Object {
+    "   {0,-55} {1,2} rows: {2}" -f $_.Name, $_.Count, ((@($_.Group | ForEach-Object { "$($_.Operator__c) $($_.SJO_Thresold__c)".Trim() })) -join '; ')
+  }
+}
+''
+'== 4. Newest 2,000 rows: filled count per readable field'
+$fields = @($readable | Where-Object { $_ -notmatch 'From_Address|From_address|Email_Address' }) + 'CreatedDate'
+Invoke-SfStep '08c-sjo-sample' { sf data query --target-org sf-cargill15 --result-format csv --output-file csv/sjo-config-sample.csv --query "SELECT $($fields -join ', ') FROM $obj ORDER BY CreatedDate DESC LIMIT 2000" }
+if (Test-Path csv\sjo-config-sample.csv) {
+  $s = @(Import-Csv csv\sjo-config-sample.csv -Encoding UTF8)
+  $d = @($s | ForEach-Object { $_.CreatedDate } | Sort-Object)
+  "   rows: $($s.Count)   created from $($d[0]) to $($d[-1])"
+  foreach ($f in $fields) { if ($f -ne 'CreatedDate') { "   {0,-45} {1,5}" -f $f, @($s | Where-Object { $_.$f }).Count } }
+  '   Values of the short code fields in this sample:'
+  foreach ($f in 'Type__c', 'SJO_Pais__c', 'SJO_BU__c', 'SJO_Pais_Config__c', 'SJO_From_Address_Type__c') {
+    if ($f -in $fields) { "     {0}: {1}" -f $f, ((@($s | Group-Object $f | Sort-Object Count -Descending | Select-Object -First 8 | ForEach-Object { "$(if ($_.Name) { $_.Name } else { '(empty)' })=$($_.Count)" })) -join ', ') }
+  }
+}
 
 --------------------
+
