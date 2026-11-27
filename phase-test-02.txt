@@ -353,3 +353,62 @@ Select-String -Path $src.FullName -Pattern 'Database\.executeBatch|System\.sched
 
 ----------------------
 
+function Show-SfFile([string]$Class, [int]$Max = 80) {
+  $p = "force-app\main\default\classes\$Class.cls"
+  if (-not (Test-Path $p)) { "!! $Class not found"; return }
+  "--- $Class"
+  $l = @(Get-Content $p -Encoding UTF8); $n = 0
+  for ($i = 0; $i -lt $l.Count -and $n -lt $Max; $i++) {
+    $t = $l[$i].Trim()
+    if ($t -and $t -notmatch '^(//|\*|/\*)') { if ($t.Length -gt 130) { $t = $t.Substring(0, 130) + '...' }; "{0,4}  {1}" -f ($i + 1), $t; $n++ }
+  }
+}
+function Show-SfMethod {
+  param([string]$Class, [string]$Method, [int]$Max = 70, [string]$Keep = 'if\s*\(|else|return')
+  $path = "force-app\main\default\classes\$Class.cls"
+  if (-not (Test-Path $path)) { "!! $path not found"; return }
+  $lines = @(Get-Content $path -Encoding UTF8)
+  $sigRx = '^\s*(?:@\w+(?:\([^)]*\))?\s*)?(?:(?:public|private|protected|global|webservice|static|override|virtual)\s+)+[\w<>\[\],\.\s]+?\s+' + [regex]::Escape($Method) + '\s*\('
+  $starts = @(for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match $sigRx) { $i } })
+  if (-not $starts.Count) { "!! $Class.$Method not found"; return }
+  foreach ($s in $starts) {
+    $depth = 0; $opened = $false; $shown = 0; $kept = 0
+    "== $Class.$Method (line $($s + 1))"
+    for ($i = $s; $i -lt $lines.Count; $i++) {
+      $code = $lines[$i] -replace "'(?:[^'\\]|\\.)*'", "''" -replace '//.*$', ''
+      $depth += ([regex]::Matches($code, '\{')).Count - ([regex]::Matches($code, '\}')).Count
+      if ($code.Contains('{')) { $opened = $true }
+      $t = $lines[$i].Trim()
+      if ($i -eq $s -or ($t -match $Keep -and $t -notmatch '^\s*//')) {
+        $kept++
+        if ($shown -lt $Max) { "{0,5}: {1}" -f ($i + 1), ($(if ($t.Length -gt 140) { $t.Substring(0, 140) + '...' } else { $t })); $shown++ }
+      }
+      if ($opened -and $depth -le 0) { "   ... method ends at line $($i + 1); $kept decision lines, $shown shown"; break }
+    }
+    ''
+  }
+}
+'== A. GP upload service'
+Show-SfFile BMCRF_GPParseERPReport_REST 70
+''
+'== B. SJO and ROSPBU upload services'
+Show-SfFile SJOParseERPReport_Rest 25
+Show-SfFile BMCRF_ROSPBUParseERPReport 25
+''
+'== C. Screens and scripts that call the upload services'
+$web = @(Get-ChildItem force-app\main\default\pages\*.page, force-app\main\default\components\*.component, force-app\main\default\staticresources\*.js -ErrorAction SilentlyContinue)
+$web += @(Get-ChildItem force-app\main\default\lwc, force-app\main\default\aura -Recurse -Include *.js -ErrorAction SilentlyContinue)
+Select-String -Path $web.FullName -Pattern 'gpinvoicejsondata|sjoinvoicejsondata|rospbuinvoicejsondata|rospbuPOUpdate|Cache-Control' |
+  Select-Object -First 40 | ForEach-Object {
+    $t = $_.Line.Trim(); if ($t.Length -gt 120) { $t = $t.Substring(0, 120) + '...' }
+    "   {0,-45} {1,5}  {2}" -f $_.Filename, $_.LineNumber, $t
+  }
+''
+'== D. What each GP report batch changes (execute method: field assignments and conditions, max 18 lines each)'
+$keepD = 'if\s*\(|else|BMCRF_\w+__c\s*=(?!=)|OwnerId\s*=|Status|Stage|update |insert '
+foreach ($b in 'BMCRF_GP_InvoiceProcessBatch', 'BMCRF_GP_PONumbersProcessBatch', 'BMCRF_GP_CCPPFileProcessBatch', 'BMCRF_GP_ScanningBatch', 'BMCRF_GP_BOTScanningBatch', 'BMCRF_GP_liberarBatch', 'BMCRF_GP_VouchersBatch', 'BMCRF_GP_CEVIPControllBatch') {
+  Show-SfMethod -Class $b -Method 'execute' -Max 18 -Keep $keepD
+}
+
+--------------------
+
