@@ -328,3 +328,28 @@ Get-ChildItem force-app\main\default\remoteSiteSettings\*.xml, force-app\main\de
 
 ----------------------
 
+function Show-SfLinesKeep([string]$Path, [int]$From, [int]$To, [string]$Keep) {
+  $l = @(Get-Content $Path -Encoding UTF8)
+  "--- $(Split-Path $Path -Leaf) $From-$To"
+  for ($i = $From; $i -le [Math]::Min($To, $l.Count); $i++) {
+    $t = $l[$i - 1].Trim()
+    if ($t -and $t -notmatch '^(\*|/\*)' -and $t -match $Keep) { if ($t.Length -gt 130) { $t = $t.Substring(0, 130) + '...' }; "{0,5}  {1}" -f $i, $t }
+  }
+}
+$f = 'force-app\main\default\classes\BMCRF_ROSPBUInvoiceDetailsController.cls'
+$keep = 'if\s*\(|else|SelectOption|Estado|Owner|Queue|Team|Assigned|selected\w+\s*=|isParaguayFlow|ERP\(\)|//\s*-{3,}|return'
+'== A. ROSPBU Paraguay flow'
+Show-SfLinesKeep $f 350 520 $keep
+Show-SfLinesKeep $f 1709 1733 $keep
+Show-SfLinesKeep $f 2265 2300 $keep
+''
+'== B. What starts batch / scheduled / queueable jobs (non-test code)'
+$src = @(Get-ChildItem force-app\main\default\classes\*.cls, force-app\main\default\triggers\*.trigger -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch 'Test' })
+Select-String -Path $src.FullName -Pattern 'Database\.executeBatch|System\.schedule(Batch)?\s*\(|System\.enqueueJob' |
+  Where-Object { $_.Line.Trim() -notmatch '^//' } | Select-Object -First 80 | ForEach-Object {
+    $t = $_.Line.Trim(); if ($t.Length -gt 110) { $t = $t.Substring(0, 110) + '...' }
+    "   {0,-48} {1,5}  {2}" -f ($_.Filename -replace '\.(cls|trigger)$', ''), $_.LineNumber, $t
+  }
+
+----------------------
+
