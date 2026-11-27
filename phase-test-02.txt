@@ -435,3 +435,28 @@ foreach ($b in 'BMCRF_GP_PONumbersProcessBatch', 'BMCRF_GP_CCPPFileProcessBatch'
 
 --------------------
 
+function Show-SfRange([string]$Class, [int]$From, [int]$To, [string]$Keep, [int]$Max = 40) {
+  $p = "force-app\main\default\classes\$Class.cls"
+  if (-not (Test-Path $p)) { "!! $Class not found"; return }
+  $l = @(Get-Content $p -Encoding UTF8)
+  $To = [Math]::Min($To, $l.Count)
+  $hits = @(for ($i = $From - 1; $i -lt $To; $i++) {
+      $t = $l[$i].Trim()
+      if ($t -and $t -notmatch '^(//|\*|/\*)' -and $t -match $Keep) { if ($t.Length -gt 135) { $t = $t.Substring(0, 135) + '...' }; "{0,5}  {1}" -f ($i + 1), $t }
+    })
+  "--- $Class $From-$To ($($hits.Count) matching, showing up to $Max)"
+  $hits | Select-Object -First $Max
+  ''
+}
+$keepA = 'if\s*\(|else|File''|WHERE|BMCRF_\w+__c\s*=(?!=)|OwnerId\s*=|Status|Stage'
+'== A. The rest of AprobacionesFile and BOTScanning'
+Show-SfRange BMCRF_GP_InvoiceProcessBatch 297 355 $keepA 40
+Show-SfRange BMCRF_GP_BOTScanningBatch 143 237 $keepA 40
+$keepB = 'if\s*\(|else|WHERE|(BMCRF|SJO)_\w+__c\s*=(?!=)|OwnerId\s*=|RecordTypeId|statuscode|responseBody|@Http|insert |upsert |ContentVersion|Attachment|logException'
+'== B. Inbound create services'
+Show-SfRange BMCRF_GPAPICreateInvoice 1 405 $keepB 45
+Show-SfRange BMCRF_SJO_CreateInvoice_Integration 1 309 $keepB 40
+Show-SfRange BMCRF_SJO_OnBase_Integration 1 688 $keepB 60
+
+--------------------
+
