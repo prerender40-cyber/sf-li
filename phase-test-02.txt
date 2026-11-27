@@ -482,3 +482,24 @@ Show-SfRange BMCRF_SJO_OnBase_Integration 248 688 $keep 100
 
 ---------------------
 
+function Show-SfRange([string]$Class, [int]$From, [int]$To, [string]$Keep, [int]$Max = 40) {
+  $p = "force-app\main\default\classes\$Class.cls"
+  if (-not (Test-Path $p)) { "!! $Class not found"; return }
+  $l = @(Get-Content $p -Encoding UTF8)
+  $To = [Math]::Min($To, $l.Count)
+  $guard = '^if\s*\((\s*(&&|\|\|)?\s*!?\s*(String\.isNotBlank\([^)]*\)|[\w.]+(\([^)]*\))?\s*!=\s*(null|'''')))+\s*\)\s*\{?$'
+  $hits = @(for ($i = $From - 1; $i -lt $To; $i++) {
+      $t = $l[$i].Trim()
+      if ($t -and $t -notmatch '^(//|\*|/\*)' -and $t -match $Keep -and $t -notmatch $guard) { if ($t.Length -gt 135) { $t = $t.Substring(0, 135) + '...' }; "{0,5}  {1}" -f ($i + 1), $t }
+    })
+  "--- $Class $From-$To ($($hits.Count) matching, showing up to $Max)"
+  $hits | Select-Object -First $Max
+  ''
+}
+$keep = 'if\s*\(|else|WHERE|(BMCRF|SJO)_\w+__c\s*=(?!=)|OwnerId\s*=|ownerID\s*=|RecordTypeId|statuscode|statusCode|responseBody|res\.|return |insert |upsert |Database\.|ContentVersion|ContentDocumentLink|Attachment|logException|catch|throw'
+'== The tail of the inbound create services'
+Show-SfRange BMCRF_GPAPICreateInvoice 289 405 $keep 60
+Show-SfRange BMCRF_SJO_OnBase_Integration 484 688 $keep 100
+
+----------------------
+
