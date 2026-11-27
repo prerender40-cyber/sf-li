@@ -287,3 +287,44 @@ foreach ($m in $methods) { Show-SfMethod -Class $cls -Method $m -Max 25 -Keep $k
 
 ----------------------
 
+'== A. ROSPBU call sites'
+$f = 'force-app\main\default\classes\BMCRF_ROSPBUInvoiceDetailsController.cls'
+Select-String -Path $f -Pattern '\b(isParaguayFlow|isFTSERP|isJDEERP|isSOVIERP|sendInvoiceSaveEmail)\s*\(' -Context 2, 1 |
+  Where-Object { $_.Line -notmatch '(private|public)\s+\w+\s+(isParaguayFlow|isFTSERP|isJDEERP|isSOVIERP|sendInvoiceSaveEmail)\s*\(' } |
+  ForEach-Object {
+    '---'
+    $n = $_.LineNumber
+    $pre = @($_.Context.PreContext); for ($k = 0; $k -lt $pre.Count; $k++) { "{0,5}  {1}" -f ($n - $pre.Count + $k), $pre[$k].Trim() }
+    "{0,5}> {1}" -f $n, $_.Line.Trim()
+    @($_.Context.PostContext) | ForEach-Object { "{0,5}  {1}" -f ($n + 1), $_.Trim() }
+  }
+$l = @(Get-Content $f -Encoding UTF8)
+'--- updateCodigoVisibility condition and sendEmailManually body'
+foreach ($i in (1918..1921) + (2761..2766)) { "{0,5}  {1}" -f $i, $l[$i - 1].Trim() }
+''
+'== B. Batch (B), Schedulable (S), Queueable (Q), @future (F), REST (R), e-mail handler (E), HTTP callout (H)'
+Get-ChildItem force-app\main\default\classes\*.cls | Where-Object { $_.Name -notmatch 'Test' } | ForEach-Object {
+  $t = Get-Content $_.FullName -Raw -Encoding UTF8
+  $tag = (@(if ($t -match 'Database\.Batchable') { 'B' }; if ($t -match '\bSchedulable\b') { 'S' }; if ($t -match '\bQueueable\b') { 'Q' }; if ($t -match '@future') { 'F' }
+            if ($t -match '@RestResource') { 'R' }; if ($t -match 'InboundEmailHandler') { 'E' }; if ($t -match '\bHttpRequest\b') { 'H' }) -join '')
+  if ($tag) {
+    $objs = @([regex]::Matches($t, '(?i)(?:FROM|new|update|insert|upsert)\s+(\w+__c)\b') | ForEach-Object { $_.Groups[1].Value } | Group-Object | Sort-Object Count -Descending | Select-Object -First 3 | ForEach-Object Name)
+    $ep = @([regex]::Matches($t, "callout:(\w+)|@RestResource\s*\(\s*urlMapping\s*=\s*'([^']+)'") | ForEach-Object { if ($_.Groups[1].Value) { 'callout:' + $_.Groups[1].Value } else { 'url ' + $_.Groups[2].Value } } | Sort-Object -Unique)
+    [pscustomobject]@{ Tag = $tag; Lines = ($t -split "`n").Count; Class = $_.BaseName; Info = (($objs + $ep) -join ', ') }
+  }
+} | Sort-Object Class | ForEach-Object { "   {0,-5} {1,5}  {2,-48} {3}" -f $_.Tag, $_.Lines, $_.Class, $_.Info }
+''
+'== C1. Scheduled jobs (CronTrigger)'
+$r = sf data query --target-org sf-cargill15 --json --query "SELECT CronJobDetail.Name, CronJobDetail.JobType, CronExpression, State, NextFireTime FROM CronTrigger ORDER BY CronJobDetail.Name" 2>$null | ConvertFrom-Json
+if ($r.status -eq 0) {
+  "   jobs: $($r.result.totalSize)"
+  $r.result.records | ForEach-Object { "   {0,-50} type {1,-3} {2,-28} {3,-8} next {4}" -f $_.CronJobDetail.Name, $_.CronJobDetail.JobType, $_.CronExpression, $_.State, $_.NextFireTime }
+} else { '   ERROR: ' + "$($r.message)".Split("`n")[0] }
+'== C2. Remote site settings and named credentials (downloaded metadata)'
+Get-ChildItem force-app\main\default\remoteSiteSettings\*.xml, force-app\main\default\namedCredentials\*.xml -ErrorAction SilentlyContinue | ForEach-Object {
+  $x = Get-Content $_.FullName -Raw
+  "   {0,-45} {1}  active={2}" -f ($_.Name -replace '\.(remoteSite|namedCredential)-meta\.xml$', ''), ([regex]::Match($x, '<(url|endpoint)>([^<]+)')).Groups[2].Value, ([regex]::Match($x, '<isActive>([^<]+)')).Groups[1].Value
+}
+
+----------------------
+
