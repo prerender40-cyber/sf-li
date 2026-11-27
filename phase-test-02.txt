@@ -43,3 +43,64 @@ Get-ChildItem force-app\main\default\objects\ROSPBU_Configuration_Data__c\fields
 
 -------------------------
 
+function Show-SfLines([string]$Class, [int]$From, [int]$To) {
+  $l = @(Get-Content "force-app\main\default\classes\$Class.cls" -Encoding UTF8)
+  "--- $Class $From-$To"
+  for ($i = $From; $i -le [Math]::Min($To, $l.Count); $i++) {
+    $t = $l[$i - 1].Trim()
+    if ($t -and $t -notmatch '^(//|\*|/\*)' -and $t -match 'if\s*\(|for\s*\(|Group|Name|=\s*true|SELECT') {
+      if ($t.Length -gt 140) { $t = $t.Substring(0, 140) + '...' }
+      "{0,4}  {1}" -f $i, $t
+    }
+  }
+}
+'== A. Group-based role flags'
+Show-SfLines BMCRF_SJOInvoiceDetailsController 240 301
+Show-SfLines BMCRF_ROSPBUInvoiceDetailsController 245 286
+Show-SfLines BMCRF_GPInvoiceDetailsController 165 242
+''
+'== B. SJO_Configuration_Data__c'
+if (-not $names) {
+  $me = (sf org display user --target-org sf-cargill15 --json | ConvertFrom-Json).result
+  $uid = "$($me.id)".Substring(0, 15)
+  $names = @(Import-Csv csv\permset-assignments.csv | Where-Object { "$($_.'Assignee.Id')".StartsWith($uid) } | ForEach-Object { $_.'PermissionSet.Name' } | Sort-Object -Unique)
+}
+$dir = 'force-app\main\default\objects\SJO_Configuration_Data__c\fields'
+$meta = @{}
+Get-ChildItem $dir -File | ForEach-Object {
+  $x = Get-Content $_.FullName -Raw
+  $meta[($_.Name -replace '\.field-meta\.xml$', '')] = [pscustomobject]@{
+    Type = ([regex]::Match($x, '<type>([^<]+)')).Groups[1].Value
+    Required = $x -match '<required>true'
+  }
+}
+$readable = @(Import-Csv csv\field-permissions.csv | Where-Object { $_.SobjectType -eq 'SJO_Configuration_Data__c' -and $_.PermissionsRead -eq 'true' -and $_.'Parent.Name' -in $names } | ForEach-Object { ($_.Field -split '\.')[1] } | Sort-Object -Unique)
+'   All fields (R = I can read, - = hidden from me):'
+$meta.Keys | Sort-Object | ForEach-Object {
+  $ok = ($_ -in $readable) -or $meta[$_].Required -or $meta[$_].Type -eq 'MasterDetail'
+  "     {0} {1} [{2}]" -f $(if ($ok) { 'R' } else { '-' }), $_, $meta[$_].Type
+}
+$want = 'Type__c', 'SJO_Pais_Config__c', 'SJO_BU_Config__c', 'SJO_Subproceso__c', 'Operator__c', 'SJO_Thresold__c', 'SJO_Approver__c', 'SJO_Delegated_Approver__c'
+$use = @($want | Where-Object { $meta.ContainsKey($_) -and (($_ -in $readable) -or $meta[$_].Required) })
+'   Querying: ' + ($use -join ', ')
+'   Skipped (missing or hidden): ' + ((@($want | Where-Object { $_ -notin $use })) -join ', ')
+if ($use.Count) {
+  Invoke-SfStep '08b-sjo-config' { sf data query --target-org sf-cargill15 --result-format csv --output-file csv/sjo-config.csv --query "SELECT $($use -join ', ') FROM SJO_Configuration_Data__c" }
+}
+if (Test-Path csv\sjo-config.csv) {
+  $cfg = @(Import-Csv csv\sjo-config.csv -Encoding UTF8)
+  "   rows: $($cfg.Count)   by Type: " + ((@($cfg | Group-Object Type__c | ForEach-Object { "$($_.Name)=$($_.Count)" })) -join ', ')
+  $ap = @($cfg | Where-Object { $_.SJO_Approver__c })
+  "   approver rows: $($ap.Count) (with a delegate: $(@($ap | Where-Object { $_.SJO_Delegated_Approver__c }).Count))"
+  $groups = @($ap | Group-Object { "$($_.SJO_Pais_Config__c) | $($_.SJO_BU_Config__c) | $($_.SJO_Subproceso__c)" })
+  "   country|BU|sub-process combinations: $($groups.Count); with 2+ rows: $(@($groups | Where-Object Count -gt 1).Count)"
+  $groups | Sort-Object Name | Select-Object -First 25 | ForEach-Object {
+    "   {0,-55} {1,2} rows: {2}" -f $_.Name, $_.Count, ((@($_.Group | ForEach-Object { "$($_.Operator__c) $($_.SJO_Thresold__c)".Trim() })) -join '; ')
+  }
+}
+
+--------------------
+
+
+
+--------------------
