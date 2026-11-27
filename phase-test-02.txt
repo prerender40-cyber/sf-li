@@ -156,3 +156,60 @@ if (Test-Path csv\sjo-config-sample.csv) {
 
 --------------------
 
+$obj = 'SJO_Configuration_Data__c'
+$files = @(Get-ChildItem force-app\main\default\classes\*.cls, force-app\main\default\triggers\*.trigger -ErrorAction SilentlyContinue |
+  Where-Object { $_.Name -notmatch 'Test' -and (Select-String -Path $_.FullName -Pattern $obj -SimpleMatch -Quiet) })
+'== 1. Non-test classes/triggers that mention the object (number of mentions; B = batch, S = schedulable, R = REST/email/HTTP)'
+foreach ($f in $files) {
+  $txt = Get-Content $f.FullName -Raw -Encoding UTF8
+  $tag = (@(if ($txt -match 'Database\.Batchable') { 'B' }; if ($txt -match '\bSchedulable\b') { 'S' }; if ($txt -match '@RestResource|Messaging\.InboundEmailHandler|HttpRequest') { 'R' }) -join '')
+  "   {0,3}  {1,-4} {2}" -f ([regex]::Matches($txt, $obj)).Count, $tag, $f.BaseName
+}
+''
+'== 2. Writes: variables of this type, the fields assigned to them, and the DML lines'
+foreach ($f in $files) {
+  $lines = @(Get-Content $f.FullName -Encoding UTF8)
+  $txt = $lines -join "`n"
+  $vars = @([regex]::Matches($txt, "(?:$obj|List<$obj>)\s+(\w+)\s*[=;:]") | ForEach-Object { $_.Groups[1].Value } |
+    Where-Object { $_ -notin 'new', 'return' } | Sort-Object -Unique)
+  $vars += @([regex]::Matches($txt, "for\s*\(\s*$obj\s+(\w+)\s*:") | ForEach-Object { $_.Groups[1].Value })
+  $vars = @($vars | Sort-Object -Unique)
+  if (-not $vars) { continue }
+  $vp = ($vars | ForEach-Object { [regex]::Escape($_) }) -join '|'
+  $set = @([regex]::Matches($txt, "\b(?:$vp)\.(\w+)\s*=(?!=)") | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+  $news = @([regex]::Matches($txt, "new\s+$obj\s*\(([^)]*)\)") | ForEach-Object { [regex]::Matches($_.Groups[1].Value, '(\w+)\s*=') | ForEach-Object { $_.Groups[1].Value } } | Sort-Object -Unique)
+  $dml = @(for ($i = 0; $i -lt $lines.Count; $i++) {
+      $t = $lines[$i].Trim()
+      if ($t -notmatch '^(//|\*)' -and $t -match "^(insert|update|upsert|delete)\s+(?:$vp)\b|Database\.(insert|update|upsert|delete)\w*\s*\(\s*(?:$vp)\b") { "{0}:{1}" -f ($i + 1), ($t -replace '\s+', ' ') }
+    })
+  if (-not ($set -or $news -or $dml)) { continue }
+  "--- $($f.BaseName)   variables: $($vars -join ', ')"
+  if ($set) { "     fields assigned : $($set -join ', ')" }
+  if ($news) { "     set in new(...) : $($news -join ', ')" }
+  $dml | Select-Object -First 8 | ForEach-Object { "     DML  $_" }
+}
+''
+'== 3. Reads: the WHERE part of each query on the object (first 40)'
+& { foreach ($f in $files) {
+  $txt = (Get-Content $f.FullName -Raw -Encoding UTF8) -replace '\s+', ' '
+  [regex]::Matches($txt, "FROM $obj\b([^\];]{0,160})") | ForEach-Object {
+    $w = $_.Groups[1].Value.Trim(); if (-not $w) { $w = '(no filter)' }
+    "   {0}: {1}" -f $f.BaseName, $w
+  }
+} } | Select-Object -First 40
+''
+'== 4. Flows that create or update this object'
+Get-ChildItem force-app\main\default\flows\*.flow-meta.xml -ErrorAction SilentlyContinue | ForEach-Object {
+  $x = Get-Content $_.FullName -Raw
+  if ($x -match "<object>$obj</object>") {
+    $k = @(if ($x -match '<recordCreates>') { 'create' }; if ($x -match '<recordUpdates>') { 'update' }; if ($x -match '<recordDeletes>') { 'delete' }) -join '/'
+    "   {0}  [{1}]  status: {2}" -f ($_.Name -replace '\.flow-meta\.xml$', ''), $k, ([regex]::Match($x, '<status>([^<]+)')).Groups[1].Value
+  }
+}
+''
+'== 5. ROSPBU_Configuration_Data__c, for comparison: rows per year'
+$r = sf data query --target-org sf-cargill15 --json --query "SELECT CALENDAR_YEAR(CreatedDate) yr, COUNT(Id) n FROM ROSPBU_Configuration_Data__c GROUP BY CALENDAR_YEAR(CreatedDate) ORDER BY CALENDAR_YEAR(CreatedDate)" 2>$null | ConvertFrom-Json
+if ($r.status -eq 0) { $r.result.records | ForEach-Object { "   {0}  {1,12:N0}" -f $_.yr, [long]$_.n } } else { '   ERROR: ' + "$($r.message)".Split("`n")[0] }
+
+---------------------
+
