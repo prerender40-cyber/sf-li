@@ -1,0 +1,40 @@
+
+$root = 'force-app\main\default'
+function Get-SfApp([string]$Name) {
+  if ($Name -match '(?i)(^|_)ROSPBU') { 'ROSPBU' } elseif ($Name -match '(?i)(^|_)SJO') { 'SJO' } elseif ($Name -match '(?i)(^|_)GP') { 'GP' } else { '' }
+}
+'== A. Visualforce pages'
+$pages = @(Get-ChildItem "$root\pages" -Filter *.page -ErrorAction SilentlyContinue | Where-Object { Get-SfApp $_.BaseName })
+$rows = foreach ($f in $pages) {
+  $txt = Get-Content $f.FullName -Raw -Encoding UTF8
+  $ctl = if ($txt -match 'controller\s*=\s*"([^"]+)"') { $Matches[1] } else { '' }
+  $ext = if ($txt -match 'extensions\s*=\s*"([^"]+)"') { $Matches[1] } else { '' }
+  $flds = @([regex]::Matches($txt, '\b(?:BMCRF|SJO|ROSPBU)_\w+?__c\b') | ForEach-Object Value | Sort-Object -Unique)
+  $flags = @([regex]::Matches($txt, '\bis[A-Z]\w*') | ForEach-Object Value | Sort-Object -Unique)
+  [pscustomobject]@{
+    App = Get-SfApp $f.BaseName; Page = $f.BaseName; Lines = ($txt -split "`n").Count
+    Controller = (@($ctl, $ext) | Where-Object { $_ }) -join ' + '
+    Fields = $flds.Count; Rendered = ([regex]::Matches($txt, 'rendered\s*=')).Count; Flags = $flags.Count
+  }
+}
+"$($pages.Count) pages"
+$rows | Sort-Object App, Page | Format-Table -AutoSize | Out-String -Width 220
+'== B. Lightning components'
+foreach ($kind in 'lwc', 'aura') {
+  $dirs = @(Get-ChildItem "$root\$kind" -Directory -ErrorAction SilentlyContinue | Where-Object { Get-SfApp $_.Name })
+  "--- $kind ($($dirs.Count))"
+  $dirs | ForEach-Object { "  {0,-7} {1}" -f (Get-SfApp $_.Name), $_.Name }
+}
+''
+'== C. Page layouts of the invoice objects'
+$lay = @(Get-ChildItem "$root\layouts" -Filter *.layout-meta.xml -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -match '^(BMCRF_GP_Invoice__c|SJO_Invoice__c|ROSPBU_Invoice__c)-' })
+"$($lay.Count) layouts"
+$lay | ForEach-Object {
+  $x = Get-Content $_.FullName -Raw -Encoding UTF8
+  [pscustomobject]@{ Layout = $_.Name -replace '\.layout-meta\.xml$', ''; Fields = ([regex]::Matches($x, '<field>')).Count
+    Sections = ([regex]::Matches($x, '<layoutSections>')).Count }
+} | Sort-Object Layout | Format-Table -AutoSize | Out-String -Width 220
+
+-----------------------
+
