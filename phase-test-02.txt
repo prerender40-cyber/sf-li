@@ -213,3 +213,35 @@ if ($r.status -eq 0) { $r.result.records | ForEach-Object { "   {0}  {1,12:N0}" 
 
 ---------------------
 
+function Show-SfAgg([string]$Soql, [string[]]$Cols) {
+  $r = sf data query --target-org sf-cargill15 --json --query $Soql 2>$null | ConvertFrom-Json
+  if ($r.status -ne 0) { return '   ERROR: ' + "$($r.message)".Split("`n")[0] }
+  $r.result.records | ForEach-Object { $rec = $_; '   ' + ((@($Cols | ForEach-Object { $v = $rec.$_; if ($_ -eq 'yr') { "$v" } elseif ($v -is [long] -or $v -is [int]) { '{0,12:N0}' -f $v } else { '{0,-35}' -f $(if ($null -eq $v -or $v -eq '') { '(none)' } else { $v }) } })) -join '  ') }
+}
+foreach ($o in 'SJO_Configuration_Data__c', 'ROSPBU_Configuration_Data__c') {
+  "== $o"
+  '   Record types in metadata: ' + ((@(Get-ChildItem "force-app\main\default\objects\$o\recordTypes" -File -ErrorAction SilentlyContinue | ForEach-Object {
+          $x = Get-Content $_.FullName -Raw; ($_.Name -replace '\.recordType-meta\.xml$', '') + $(if ($x -match '<active>false') { ' (inactive)' } else { '' }) })) -join ', ')
+  '   Rows per record type:'
+  Show-SfAgg "SELECT RecordType.Name rt, COUNT(Id) n FROM $o GROUP BY RecordType.Name ORDER BY COUNT(Id) DESC" 'rt', 'n'
+  ''
+}
+'== SJO_Configuration_Data__c rows per record type and year'
+Show-SfAgg "SELECT RecordType.Name rt, CALENDAR_YEAR(CreatedDate) yr, COUNT(Id) n FROM SJO_Configuration_Data__c GROUP BY RecordType.Name, CALENDAR_YEAR(CreatedDate) ORDER BY RecordType.Name, CALENDAR_YEAR(CreatedDate)" 'rt', 'yr', 'n'
+''
+function Show-SfLines([string]$Class, [int]$From, [int]$To) {
+  $l = @(Get-Content "force-app\main\default\classes\$Class.cls" -Encoding UTF8)
+  "--- $Class $From-$To"
+  for ($i = $From; $i -le [Math]::Min($To, $l.Count); $i++) {
+    $t = $l[$i - 1].Trim()
+    if ($t -and $t -notmatch '^(//|\*|/\*)') { if ($t.Length -gt 140) { $t = $t.Substring(0, 140) + '...' }; "{0,4}  {1}" -f $i, $t }
+  }
+}
+'== Code around the inserts'
+Show-SfLines BMCRF_SJOCreateInvoiceFromEmail 138 155
+Show-SfLines BMCRF_SJOCreateInvoiceFromEmail 222 235
+Show-SfLines BMCRF_SJO_OnBase_Integration 662 677
+Show-SfLines BMCRF_SJOBatchCodingInvoicesController 55 75
+
+---------------------
+
