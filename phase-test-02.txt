@@ -412,3 +412,26 @@ foreach ($b in 'BMCRF_GP_InvoiceProcessBatch', 'BMCRF_GP_PONumbersProcessBatch',
 
 --------------------
 
+function Show-SfBeforeExecute([string]$Class, [string]$Keep, [int]$Max = 30) {
+  $p = "force-app\main\default\classes\$Class.cls"
+  if (-not (Test-Path $p)) { "!! $Class not found"; return }
+  $l = @(Get-Content $p -Encoding UTF8)
+  $end = $l.Count
+  for ($i = 0; $i -lt $l.Count; $i++) { if ($l[$i] -match 'void\s+execute\s*\(') { $end = $i; break } }
+  $hits = @(for ($i = 0; $i -lt $end; $i++) {
+      $t = $l[$i].Trim()
+      if ($t -and $t -notmatch '^(//|\*|/\*)' -and $t -match $Keep) { if ($t.Length -gt 135) { $t = $t.Substring(0, 135) + '...' }; "{0,5}  {1}" -f ($i + 1), $t }
+    })
+  "--- $Class (lines 1-$end before execute; $($hits.Count) matching, showing up to $Max)"
+  $hits | Select-Object -First $Max
+  ''
+}
+$keep = 'if\s*\(|else|File''|WHERE|BMCRF_\w+__c\s*=(?!=)|OwnerId\s*=|\.get\(''|Status|Stage'
+'== GP report batches: logic before execute()'
+Show-SfBeforeExecute BMCRF_GP_InvoiceProcessBatch $keep 110
+foreach ($b in 'BMCRF_GP_PONumbersProcessBatch', 'BMCRF_GP_CCPPFileProcessBatch', 'BMCRF_GP_ScanningBatch', 'BMCRF_GP_BOTScanningBatch', 'BMCRF_GP_liberarBatch', 'BMCRF_GP_VouchersBatch', 'BMCRF_GP_CEVIPControllBatch') {
+  Show-SfBeforeExecute $b $keep 30
+}
+
+--------------------
+
