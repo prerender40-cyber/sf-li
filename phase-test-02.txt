@@ -245,3 +245,45 @@ Show-SfLines BMCRF_SJOBatchCodingInvoicesController 55 75
 
 ---------------------
 
+function Show-SfMethod {
+  param([string]$Class, [string]$Method, [int]$Max = 70,
+        [string]$Keep = 'if\s*\(|else|switch|when |return|Estado__c|Stage__c|Status__c|OwnerId|Queue|Team|Approver|update |insert |sendEmail|Database\.')
+  $path = "force-app\main\default\classes\$Class.cls"
+  if (-not (Test-Path $path)) { "!! $path not found"; return }
+  $lines = @(Get-Content $path -Encoding UTF8)
+  $sigRx = '^\s*(?:@\w+(?:\([^)]*\))?\s*)?(?:(?:public|private|protected|global|webservice|static|override|virtual)\s+)+[\w<>\[\],\.\s]+?\s+' + [regex]::Escape($Method) + '\s*\('
+  $starts = @(for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match $sigRx) { $i } })
+  if (-not $starts.Count) { "!! $Class.$Method not found"; return }
+  foreach ($s in $starts) {
+    $depth = 0; $opened = $false; $shown = 0; $kept = 0
+    "== $Class.$Method (line $($s + 1))"
+    for ($i = $s; $i -lt $lines.Count; $i++) {
+      $code = $lines[$i] -replace "'(?:[^'\\]|\\.)*'", "''" -replace '//.*$', ''
+      $depth += ([regex]::Matches($code, '\{')).Count - ([regex]::Matches($code, '\}')).Count
+      if ($code.Contains('{')) { $opened = $true }
+      $t = $lines[$i].Trim()
+      if ($i -eq $s -or ($t -match $Keep -and $t -notmatch '^\s*//')) {
+        $kept++
+        if ($shown -lt $Max) { "{0,5}: {1}" -f ($i + 1), ($(if ($t.Length -gt 150) { $t.Substring(0, 150) + '...' } else { $t })); $shown++ }
+      }
+      if ($opened -and $depth -le 0) { "   ... method ends at line $($i + 1); $kept decision lines, $shown shown"; break }
+    }
+    ''
+  }
+}
+$cls = 'BMCRF_ROSPBUInvoiceDetailsController'
+$methods = 'isFTSERP', 'isJDEERP', 'isSOVIERP', 'isParaguayFlow', 'isPUSA_BU', 'getIsInsumos', 'updateCodigoVisibility', 'format3_3_Rest', 'sendInvoiceSaveEmail', 'sendEmailManually'
+$keep = 'if\s*\(|else|return|ERP|Pais|BU__c|Insumo|Paraguay|PUSA|Codigo|visib|Estado__c|sendEmail|setToAddresses|Template|insert |update |Http|Endpoint|format'
+'== 1. Where each method is used (classes, Visualforce pages, components)'
+$src = @(Get-ChildItem force-app\main\default\classes\*.cls, force-app\main\default\pages\*.page, force-app\main\default\components\*.component -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch 'Test' })
+foreach ($m in $methods) {
+  $rx = '\b' + [regex]::Escape($m) + '\b|\b' + [regex]::Escape(($m -replace '^get', '')) + '\b'
+  $uses = @(Select-String -Path $src.FullName -Pattern $rx | Where-Object { $_.Filename -ne "$cls.cls" -or $_.Line -notmatch ('(public|private|global)\s.*\b' + [regex]::Escape($m) + '\s*\(') })
+  "   {0,-24} {1}" -f $m, ((@($uses | Group-Object Filename | ForEach-Object { "$($_.Name) x$($_.Count)" })) -join ', ')
+}
+''
+'== 2. Method bodies (decision lines, max 25 each)'
+foreach ($m in $methods) { Show-SfMethod -Class $cls -Method $m -Max 25 -Keep $keep }
+
+----------------------
+
